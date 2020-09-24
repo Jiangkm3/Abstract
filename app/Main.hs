@@ -1,6 +1,5 @@
-module Main where
+import Init
 
-import Lib
-
-main :: IO ()
-main = someFunc
+main = do
+  analyzeAST "test.c"
+  print("Here!")
