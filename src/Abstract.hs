@@ -51,10 +51,53 @@ module Abstract ( Abstract
                 , linconsArrayClearIndecies
                 , linconsArraySetIndex
                 , linconsArraySetIndecies
+                -- * Texpr
+                , Texpr1
+                , OpType(..)
+                , RoundingType(..)
+                , RoundingDir(..)
+                , texprMakeConstant
+                , texprMakeLeafVar
+                , texprMakeUnOp
+                , texprMakeBinOp
+                , texprFromLinexpr
+                , texprCopy
+                -- ** Tests
+                , texprHasVar
+                , texprIsConstant
+                , texprIsPolynomial
+                , texprIsPolyfrac
+                , texprIsScalar
+                -- ** Operations
+                , texprSubstitute
+                -- * Tcons
+                , Tcons1
+                , tconsMake
+                , tconsFromLincons
+                , tconsCopy
+                -- ** Access
+                , tconsGetScalar
+                , tconsGetExpr
+                -- * Tcons array
+                , Tcons1Array
+                , tconsArrayMake
+                , tconsArrayClear
+                -- ** Access
+                , tconsArraySize
+                , tconsArrayGetIndex
+                -- ** Setters
+                , tconsArrayClearIndex
+                , tconsArrayClearIndecies
+                , tconsArraySetIndex
+                , tconsArraySetIndecies
                 -- * Abstract
                 , Abstract1
+                , abstractPrint
                 , abstractBottom
                 , abstractOfLinconsArray
+                , abstractToLinconsArray
+                , abstractOfTconsArray
+                , abstractToTconsArray
                 -- ** Access
                 , abstractGetEnvironment
                 -- ** Tests
@@ -62,6 +105,13 @@ module Abstract ( Abstract
                 , abstractIsBottom
                 , abstractIsLeq
                 , abstractIsEq
+                , abstractSatLincons
+                , abstractSatTcons
+                , abstractVarIsUnconstrained
+                -- ** Extract properties
+                , abstractBoundLinexpr
+                , abstractBoundTexpr
+                , abstractBoundVar
                 -- ** Operations
                 , abstractMeet
                 , abstractJoin
@@ -72,17 +122,37 @@ module Abstract ( Abstract
                 , abstractUnify
                 , abstractCanonicalize
                 , abstractMinimize
+                -- ** Other
+                , abstractExpand
+                , abstractFold
+                , abstractWiden
+                , abstractClosure
+                -- * Interval
+                , Interval
+                -- ** Tests
+                , intervalIsTop
+                , intervalIsBottom
+                , intervalIsLeq
+                , intervalIsLe
+                , intervalIsEq
+                , intervalIsGeq
+                , intervalIsGe
+                , intervalIsInt
                 -- * Other types
                 , Scalar
                 ) where
 import           Abstract1
 import           AbstractMonad
 import           Apron.Abstract1
+import           Apron.Interval
 import           Apron.Lincons1
 import           Apron.Linexpr1
 import           Apron.Scalar
+import           Interval
 import           Lincons1
 import           Linexpr1
+import           Tcons1
+import           Texpr1
 import           Types
 
 -- | Make a new constraint for a linear equation.

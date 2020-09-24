@@ -32,6 +32,8 @@ import           Foreign.C
 
 {#fun ap_abstract1_size as ^ { `Manager', `Abstract1' } -> `CULong' #}
 
+{#fun print_abstract1 as ^ { `Manager', `Abstract1' } -> `()' #}
+
 -- Control of internal representation
 
 {#fun ap_abstract1_minimize as ^ { `Manager', `Abstract1' } -> `()' #}
@@ -119,4 +121,9 @@ import           Foreign.C
 {#fun ap_abstract1_of_tcons_array_wrapper as ^ { `Manager', `Environment', `Tcons1Array' } -> `Abstract1' #}
 
 {#fun ap_abstract1_unify_wrapper as ^ { `Manager', `Bool', `Abstract1', `Abstract1' } -> `Abstract1' #}                      
-                      
+
+{#fun ap_abstract1_widening_wrapper as ^ { `Manager', `Abstract1', `Abstract1' } -> `Abstract1' #}
+
+{#fun ap_abstract1_closure_wrapper as ^ { `Manager', `Bool', `Abstract1' } -> `Abstract1' #}
+
+
