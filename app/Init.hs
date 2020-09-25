@@ -14,18 +14,15 @@ import           AbstractMonad
 data State a = State { stInfo  :: a
                      , locInfo :: NodeInfo
                      }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord)
 
+type AbsState = State (Abstract Abstract1)
+
+instance Show (State a) where
+  show _ = ""
 
 toState :: a -> NodeInfo -> State a
 toState = State
-
--- | Dummy state
-type PostState = Abstract1
-
-printSt :: Abstract Abstract1 -> IO String
-printSt abs1 = do
-  return "State"
 
 -- | Uses language-c's built-in (nice) annotation support
 -- See here for more info:
@@ -34,10 +31,22 @@ initTo :: a -> CTranslUnit -> CTranslationUnit (State a)
 initTo abs1 t = toState abs1 <$> t
 
 -- | Initialize everything to a start state and then print the AST
-analyzeAST :: String -> IO ()
+analyzeAST :: String -> IO (CTranslationUnit AbsState)
 analyzeAST name = do
   symT <- getSymT name
-  return (initAbstractState Intervals symT [])
-  abstract <- return abstractBottom
+  let abs1 = astHelper symT
+  astPrinter abs1
   tu <- parseC name
-  print $ initTo abstract tu
+  let initS = initTo abs1 tu
+  return initS
+
+astPrinter :: Abstract Abstract1 -> IO()
+astPrinter abs1 = evalAbstract defaultState $ do
+  abs <- abs1
+  abstractPrint(abs)
+
+astHelper :: [String] -> Abstract Abstract1
+astHelper symT = do
+  initAbstractState Intervals symT []
+  abs <- abstractBottom
+  return abs
