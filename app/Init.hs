@@ -24,18 +24,16 @@ instance Show (State a) where
 toState :: a -> NodeInfo -> State a
 toState = State
 
--- | Uses language-c's built-in (nice) annotation support
--- See here for more info:
--- https://hackage.haskell.org/package/language-c-0.8.3/docs/Language-C-Syntax-AST.html#g:9
+-- Uses language-c's built-in (nice) annotation support
 initTo :: a -> CTranslUnit -> CTranslationUnit (State a)
 initTo abs1 t = toState abs1 <$> t
 
--- | Initialize everything to a start state and then print the AST
+-- Initialize everything to a start state and then print the AST
 analyzeAST :: String -> IO (CTranslationUnit AbsState)
 analyzeAST name = do
   symT <- getSymT name
   let abs1 = astHelper symT
-  astPrinter abs1
+--  astPrinter abs1
   tu <- parseC name
   let initS = initTo abs1 tu
   return initS

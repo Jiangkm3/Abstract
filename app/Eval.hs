@@ -1,3 +1,5 @@
+-- All Helper functions are not intended to be used as standalone functions
+
 module Eval where
 
 import Init
@@ -21,44 +23,61 @@ getAbs1 :: AbsState -> Abstract1
 getAbs1 (abs1 _) = abs1
 -}
 
+-----
 
-{- Programs -}
-evalProg :: CTranslationUnit (AbsState) -> IO (CTranslationUnit (AbsState))
-evalProg (CTranslUnit extDecls a) = do
-  let tu = CTranslUnit (map evalExtDecl extDecls) a
-  return tu
+{- Program Level -}
+-- Get the initial state of Abstract_Top
+getInitSt :: Abstract Abstract1 -> Abstract Abstract1
+getInitSt st = do
+  abs <- st
+  abs1 <- abstractTop
+  return abs1
 
+evalProg :: CTranslationUnit AbsState -> IO (CTranslationUnit AbsState)
+evalProg (CTranslUnit extDecls (State a loc)) = do
+  let abs1 = getInitSt a
+  let nExtDecls = evalEDLst abs1 extDecls
+  return (CTranslUnit nExtDecls (State abs1 loc))
 
-evalExtDecl :: CExternalDeclaration (AbsState) -> CExternalDeclaration (AbsState)
-evalExtDecl (CDeclExt a) = error "Declaration not implemented"
-evalExtDecl (CFDefExt a) = CFDefExt (evalFunc a)
-evalExtDecl _            = error "Not Implemented"
+evalEDLst :: Abstract Abstract1 -> [CExternalDeclaration AbsState] -> [CExternalDeclaration AbsState]
+evalEDLst preC [] = []
+evalEDLst preC (ed:eds) = [newEd] ++ (evalEDLst newSt eds)
+  where newEd = evalExtDecl preC ed
+        newSt = getStFromED newEd
 
+-- Just a helper function to help extract the state from ED
+getStFromED :: CExternalDeclaration AbsState -> Abstract Abstract1
+getStFromED (CDeclExt _) = error "Declaration not implemented"
+getStFromED (CFDefExt (CFunDef _ _ _ _ (State a _))) = a
+getStFromED _ = error "Declaration not implemented"
 
-{- Functions -}
--- Initialize the state of a function:
--- All args = Top
--- All other variables = Bot
-initFunc :: Abstract Abstract1 -> CFunctionDef AbsState -> Abstract Abstract1
-initFunc abs1 func@(CFunDef _ (CDeclr (Just (Ident name _ _)) derived _ _ _) _ _ _) = do
-  let varLst = derived >>= initFuncHelper name
-  initAbstractState Intervals varLst []
-  args <- abstractTop
-  vars <- abs1
-  nvars <- abstractMeet vars args
-  return nvars
+evalExtDecl :: Abstract Abstract1 -> CExternalDeclaration AbsState -> CExternalDeclaration AbsState
+evalExtDecl st (CDeclExt a) = error "Declaration not implemented"
+evalExtDecl st (CFDefExt a) = CFDefExt (evalFunc st a)
+evalExtDecl st _            = error "Not Implemented"
 
--- Find all the arguments faster
-initFuncHelper :: String -> CDerivedDeclarator AbsState -> [String]
-initFuncHelper fname (CFunDeclr (Right (decls, False)) _ _) = do
-  (CDecl _ vars _) <- decls
-  ndecl <- map (\(Just (CDeclr (Just (Ident varName _ _)) _ _ _ _), Nothing, Nothing) -> (fname ++ "@" ++ varName)) vars
-  return ndecl
+-----
 
-evalFunc :: CFunctionDef AbsState -> CFunctionDef AbsState
-evalFunc func@(CFunDef a b c d (State st loc)) = initF
-  where nst   = initFunc st func
-        initF = CFunDef a b c d (State nst loc)
+{- Function Level -}
+evalFunc :: Abstract Abstract1 -> CFunctionDef AbsState -> CFunctionDef AbsState
+evalFunc preC func@(CFunDef a b c d (State _ loc)) = initF
+  where initF = CFunDef a b c d (State preC loc)
+
+-----
+
+{- Declaration Level -}
+-- Right now that we don't care about types, the only concern is 
+-- with the initializers and expressions
+evalDecl :: Abstract Abstract1 -> CDeclaration AbsState -> CDeclaration AbsState
+evalDecl preC cdecl@(CDecl _ _ _) = cdecl
+
+-- Process every variable declaration separately
+evalDeclHelper :: Abstract Abstract1 -> (Maybe (CDeclarator a), Maybe (CInitializer a), Maybe (CExpression a)) -> Abstract Abstract1
+-- If it is only a declaration, no need to change the abstraction
+evalDeclHelper abs1 (_, Nothing, Nothing) = abs1
+evalDeclHelper abs1 (_, _, Nothing) = abs1
+evalDeclHelper _ _ = error "Not implemented"
+
 
 {- Statements -}
 -- A helper function to evaluate compounds
