@@ -43,7 +43,7 @@ printArgs (CDecl _ vars _) = " " ++ (unwords (map (\(Just (CDeclr (Just (Ident v
 
 printDecl :: CDeclaration AbsState -> IO ()
 printDecl (CDecl _ vars st) = do
-  putStrLn ("Declaration: " ++ (init (unwords (map printDeclHelper vars))))
+  putStrLn ("Decl: " ++ (init (unwords (map printDeclHelper vars))))
   printSt st
 
 printDeclHelper :: (Maybe (CDeclarator AbsState), Maybe (CInitializer AbsState), Maybe (CExpression AbsState)) -> String
@@ -62,6 +62,45 @@ printStmt (CExpr (Just expr) st) = do
   printSt st
 printStmt (CReturn Nothing st) = do
   putStrLn "Return Void"
+  printSt st
+-- fstmt is of type Maybe (CStatmenet AbsState)
+printStmt (CIf expr tstmt fstmt st) = do
+  putStrLn ("If " ++ (printExpr expr) ++ ":\n")
+  printStmt tstmt
+  putStrLn "Else:\n"
+  case fstmt of
+    Nothing -> putStrLn "Nothing or not Evaluated\n"
+    Just a -> printStmt a
+  putStrLn "End If"
+  printSt st
+-- While Statement
+printStmt (CWhile expr stmt False st) = do
+  putStrLn ("While " ++ (printExpr expr) ++ ":\n")
+  printStmt stmt
+  putStrLn "End While\n"
+  printSt st
+-- Do-While Statement
+printStmt (CWhile expr stmt True st) = do
+  putStrLn "Do:\n"
+  printStmt stmt
+  putStrLn ("While " ++ (printExpr expr) ++ "\n")
+  putStrLn "End Do-While"
+  printSt st
+printStmt (CFor init bound step stmt st) = do
+  putStrLn "For:"
+  case init of
+    Left Nothing           -> putStrLn "Init: None"
+    Left (Just expr)       -> putStrLn ("Init: " ++ (printExpr expr))
+    Right decl             -> printDecl decl
+  case bound of
+    Nothing   -> putStrLn "Bound: None"
+    Just expr -> putStrLn ("Bound: " ++ (printExpr expr))
+  case step of
+    Nothing   -> putStrLn "Step: None"
+    Just expr -> putStrLn ("Step: " ++ (printExpr expr))
+  putStrLn ""
+  printStmt stmt
+  putStrLn "End For"
   printSt st
 printStmt _ = error "Statement Case Not Implemented"
 
@@ -83,14 +122,27 @@ printExpr :: CExpression AbsState -> String
 printExpr (CConst (CIntConst cint _)) = show (getCInteger cint)
 printExpr (CVar (Ident n _ _) _) = n
 printExpr (CBinary bop expr1 expr2 _) = str1 ++ " " ++ strop ++ " " ++ str2
-  where str1 = printExpr expr1
+  where str1  = printExpr expr1
         strop = printBop bop
-        str2 = printExpr expr2
+        str2  = printExpr expr2
+printExpr (CUnary unop expr _) =
+  case (isPrefixOp unop) of
+    True  -> strop ++ str
+    False -> str ++ strop
+  where strop = printUnop unop
+        str   = printExpr expr
 printExpr (CAssign assop expr1 expr2 _) = "Assign: " ++ str1 ++ " " ++ strop ++ " " ++ str2
   where str1 = printExpr expr1
         strop = printAssop assop
         str2 = printExpr expr2
 printExpr _ = error "Expression Case Not Implemented"
+
+isPrefixOp :: CUnaryOp -> Bool
+isPrefixOp unop = 
+  case unop of
+    CPostIncOp -> False
+    CPostDecOp -> False
+    _         -> True
 
 printBop :: CBinaryOp -> String
 printBop bop =
@@ -128,3 +180,17 @@ printAssop assop =
     CAndAssOp -> "&="
     CXorAssOp -> "^="
     COrAssOp  -> "|="
+
+printUnop :: CUnaryOp -> String
+printUnop unop =
+  case unop of
+    CPreIncOp  -> "++"
+    CPreDecOp  -> "--"
+    CPostIncOp -> "++"
+    CPostDecOp -> "--"
+    CAdrOp     -> "&"
+    CIndOp     -> "*"
+    CPlusOp    -> "+"
+    CMinOp     -> "-"
+    CCompOp    -> "~"
+    CNegOp     -> "!"
