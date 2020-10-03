@@ -20,7 +20,8 @@ printTU (CTranslUnit (ed:eds) a@(State b _)) = do
 
 printED :: CExternalDeclaration AbsState -> IO ()
 printED (CDeclExt cdecl) = do
-  error "PrintDecl not implemented"
+  printDecl cdecl
+  putStrLn ""
 printED (CFDefExt (CFunDef _ (CDeclr (Just (Ident name _ _)) derived _ _ _) _ cstmt st)) = do
   putStrLn ("Function " ++ name ++ ":")
   putStrLn ("Arguments:" ++ (unwords (map printDerivedDecl derived)))

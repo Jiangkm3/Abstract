@@ -35,6 +35,8 @@ module Abstract1 ( Abstract1
                  , abstractFold
                  , abstractWiden
                  , abstractClosure
+                 -- * Assign, substitute
+                 , abstractAssignTexprArray
                  ) where
 import           AbstractMonad
 import           Apron.Abstract1
@@ -225,3 +227,11 @@ abstractClosure :: Abstract1 -> Abstract Abstract1
 abstractClosure a = do
   man <- getManager
   liftIO $ apAbstract1ClosureWrapper man False a
+
+-- | Assign a list of variables in the abstract domain to the evaluation
+-- a tree expression
+abstractAssignTexprArray :: Abstract1 -> VarName -> Texpr1 -> Word32 -> Abstract1 -> Abstract Abstract1
+abstractAssignTexprArray a1 v texpr size a2 = do
+  man <- getManager
+  var <- getVar v
+  liftIO $ apAbstract1AssignTexprArrayWrapper man False a1 var texpr (fromIntegral size) a2

@@ -2,26 +2,18 @@
 
 module Eval where
 
+import GHC.Int
 import Init
+import Types
+import Texpr1
 import Abstract1
 import AbstractMonad
+import Apron.Var
 import Language.C.Data.Ident
 import Language.C.Data.Node
 import Language.C.Syntax.AST
+import Language.C.Syntax.Constants
 import Control.Monad.State.Strict (liftIO)
-
-{- Helper Functions -}
-{-
-abs1Assg :: Abstract1 -> Var -> Texpr1 -> Abstract1
-abs1Assg org var texpr =
-  ap_abstract1_assign_texpr_array_wrapper man False org [var] texpr 1 Nothing
-
-setAbs1 :: Abstract1 -> AbsState -> AbsState
-setAbs1 abs1 (State _ ni) = toState abs1 ni
-
-getAbs1 :: AbsState -> Abstract1
-getAbs1 (abs1 _) = abs1
--}
 
 -----
 
@@ -47,12 +39,12 @@ evalEDLst preC (ed:eds) = [newEd] ++ (evalEDLst newSt eds)
 
 -- Just a helper function to help extract the state from ED
 getStFromED :: CExternalDeclaration AbsState -> Abstract Abstract1
-getStFromED (CDeclExt _) = error "Declaration not implemented"
+getStFromED (CDeclExt (CDecl _ _ (State a _))) = a
 getStFromED (CFDefExt (CFunDef _ _ _ _ (State a _))) = a
 getStFromED _ = error "Declaration not implemented"
 
 evalExtDecl :: Abstract Abstract1 -> CExternalDeclaration AbsState -> CExternalDeclaration AbsState
-evalExtDecl st (CDeclExt a) = error "Declaration not implemented"
+evalExtDecl st (CDeclExt a) = CDeclExt (evalDecl st a)
 evalExtDecl st (CFDefExt a) = CFDefExt (evalFunc st a)
 evalExtDecl st _            = error "Not Implemented"
 
@@ -60,7 +52,7 @@ evalExtDecl st _            = error "Not Implemented"
 
 {- Function Level -}
 evalFunc :: Abstract Abstract1 -> CFunctionDef AbsState -> CFunctionDef AbsState
-evalFunc preC func@(CFunDef a b c d (State _ loc)) = initF
+evalFunc preC (CFunDef a b c d (State _ loc)) = initF
   where initF = CFunDef a b c d (State preC loc)
 
 -----
@@ -69,13 +61,26 @@ evalFunc preC func@(CFunDef a b c d (State _ loc)) = initF
 -- Right now that we don't care about types, the only concern is 
 -- with the initializers and expressions
 evalDecl :: Abstract Abstract1 -> CDeclaration AbsState -> CDeclaration AbsState
-evalDecl preC cdecl@(CDecl _ _ _) = cdecl
+evalDecl preC (CDecl a b (State _ loc)) = 
+    CDecl a b (State (foldl evalDeclHelper preC b) loc)
+
+absAssgHelper :: Abstract Abstract1 -> (VarName, Texpr1) -> Abstract Abstract1
+absAssgHelper a (v, t) = do
+  a1 <- a
+  a2 <- abstractTop
+  abstractAssignTexprArray a1 v t 1 a2
 
 -- Process every variable declaration separately
-evalDeclHelper :: Abstract Abstract1 -> (Maybe (CDeclarator a), Maybe (CInitializer a), Maybe (CExpression a)) -> Abstract Abstract1
+evalDeclHelper :: Abstract Abstract1 -> (Maybe (CDeclarator AbsState), Maybe (CInitializer AbsState), Maybe (CExpression AbsState)) -> Abstract Abstract1
 -- If it is only a declaration, no need to change the abstraction
-evalDeclHelper abs1 (_, Nothing, Nothing) = abs1
-evalDeclHelper abs1 (_, _, Nothing) = abs1
+evalDeclHelper a (_, Nothing, Nothing) = a
+
+evalDeclHelper a (Just (CDeclr (Just (Ident var _ _)) _ _ _ _), (Just (CInitExpr expr _)), Nothing) = do
+  abs1 <- a
+  (texpr, pair) <- evalExpr abs1 expr
+  let npair = pair ++ [(var, texpr)]
+  foldl absAssgHelper a npair
+  
 evalDeclHelper _ _ = error "Not implemented"
 
 
@@ -104,55 +109,51 @@ evalStmt abs1 (CCompound ids (cmpds:cmpd) st) =
 -}
 
 
-{- Declarations -}
-{-
-evalDecl :: Abstract1 -> CDeclarator AbsState -> CDeclarator AbsState
-evalDecl _ _ = error "declaration not implemented"
--}
-
-
 {- Expressions -}
 -- A special return type for evaluating an expression
 -- An expression can generate a syntax tree, but might also involve assignments
-{-
-type ExprSt = Texpr1 [(Var, Texpr1)]
+type ExprSt = (Texpr1, [(VarName, Texpr1)])
 
-evalExpr :: Environment -> CExpression AbsState -> ExprSt
-evalExpr env (CAssign CAssignOp lhs rhs _)
--- We forget about lists for now
--- Technically ++a is different but also ignore that for now
-  | lhs == (CVar id _) = rtexpr nvl1
-  | otherwise          = error "invalid expression to assign to"
-  where rtexpr rvl1 = evalExpr env rhs
-        nvl1 = rvl1 ++ [(id, rtexpr)]
-evalExpr env (CAssign aop lhs rhs _)
-  | lhs == (CVar id _) = ntexpr nvl1
-  | otherwise          = error "invalid expression to assign to"
-  where rtexpr rvl1 = evalExpr env rhs
-        ltexpr      = ap_texpr1_var env id
-        ntexpr      = ap_texpr1_binop ((evalAOp aop) ltexpr rtexpr AP_RTYPE_INT AP_RDIR_NEAREST)
-        nvl1        = rvl1 ++ [(id, ntexpr)]
+evalVar :: Abstract Abstract1 -> VarName -> Abstract Var
+evalVar a v = do
+  abs <- a
+  var <- getVar v
+  return var
 
-evalExpr abs1@(_ env) (CConst (CInteger ccst _) _) =
-  (ap_texpr1_cst_scalar_int env ccst) []
+evalExpr :: Abstract1 -> CExpression AbsState -> Abstract ExprSt
+evalExpr a (CAssign CAssignOp (CVar (Ident v _ _) _) rhs _) = do
+  -- Technically ++a would be different but ignore it for now
+  (rtexpr, rpair) <- evalExpr a rhs
+  return (rtexpr, rpair ++ [(v, rtexpr)])
+
+evalExpr a (CAssign aop (CVar (Ident v _ _) _) rhs _) = do
+  (rtexpr, rpair) <- evalExpr a rhs
+  ltexpr <- texprMakeLeafVar v
+  ntexpr <- texprMakeBinOp (evalAOp aop) ltexpr rtexpr ROUND_INT ROUND_NEAREST
+  return (ntexpr, rpair ++ [(v, ntexpr)])
+
+evalExpr a (CVar (Ident v _ _) _) = do
+  ntexpr <- texprMakeLeafVar v
+  return (ntexpr, [])
+
+evalExpr a (CConst (CIntConst n _)) = do
+  ntexpr <- texprMakeConstant $ ScalarVal $ IntValue $ (fromInteger (getCInteger n) :: GHC.Int.Int32)
+  return (ntexpr, [])
 
 evalExpr _ _ = error "expression not implemented"
--}
 
 
 {- Operations -}
-{-
-evalAOp :: CAssignOp -> TexprOp
+evalAOp :: CAssignOp -> OpType
 evalAOp aop =
   case aop of
-    CMulAssOp -> AP_TEXPR_MUL
-    CDivAssOp -> AP_TEXPR_DIV
-    CRmdAssOp -> AP_TEXPR_MOD
-    CAddAssOp -> AP_TEXPR_ADD
-    CSubAssOp -> AP_TEXPR_SUB
+    CMulAssOp -> MUL_OP
+    CDivAssOp -> DIV_OP
+    CRmdAssOp -> MOD_OP
+    CAddAssOp -> ADD_OP
+    CSubAssOp -> SUB_OP
     CShlAssOp -> error "Unsupported AOp <<="
     CShrAssOp -> error "Unsupported AOp >>="
     CAndAssOp -> error "Unsupported AOp &="
     CXorAssOp -> error "Unsupported AOp ^="
     COrAssOp  -> error "Unsupported AOp |="
--}
