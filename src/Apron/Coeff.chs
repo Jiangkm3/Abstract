@@ -1,7 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE StandaloneDeriving       #-}
 module Apron.Coeff where
-import           Foreign
 import Foreign.C
 
 {# import Apron.Scalar #}
@@ -21,6 +20,8 @@ import Foreign.C
 {#fun ap_coeff_alloc as ^ { `CoeffDiscr' } -> `Coeff' #}
 
 {#fun ap_coeff_free as ^ { `Coeff' } -> `()' #}
+
+{#fun ap_coeff_print as ^ { `Coeff' } -> `()' #} 
 
 {#fun ap_coeff_reduce as ^ { `Coeff' } -> `()' #}
 

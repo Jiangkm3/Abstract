@@ -1,8 +1,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 module Apron.Scalar where
-import           Foreign
 import           Foreign.C
-import           Foreign.Ptr
 
 #include "ap_scalar.h"
 #include "wrappers.h" 
@@ -20,6 +18,8 @@ import           Foreign.Ptr
 {#fun ap_scalar_alloc as ^ { } -> `Scalar' #}
 
 {#fun ap_scalar_free as ^ { `Scalar' } -> `()' #}
+
+{#fun ap_scalar_print_wrapper as ^ { `Scalar' } -> `()' #}
 
 {#fun ap_scalar_reinit as ^ { `Scalar', `ScalarDisc' } -> `()' #} 
 

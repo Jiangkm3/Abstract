@@ -25,10 +25,9 @@ printED (CDeclExt cdecl) = do
 printED (CFDefExt (CFunDef _ (CDeclr (Just (Ident name _ _)) derived _ _ _) _ cstmt st)) = do
   putStrLn ("Function " ++ name ++ ":")
   putStrLn ("Arguments:" ++ (unwords (map printDerivedDecl derived)))
-  printSt st
   putStrLn ""
   printStmt cstmt
-  putStrLn "--"
+  putStrLn "End Function\n\n--"
   putStrLn ""
 printED _ = do
   return ()

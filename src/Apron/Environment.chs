@@ -1,15 +1,16 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 module Apron.Environment where
-import Apron.Var
 import           Foreign.Concurrent
-import           Foreign hiding (addForeignPtrFinalizer)
+import           Foreign hiding (addForeignPtrFinalizer, void)
 import Foreign.C.String    
 import           Foreign.C
+import Control.Monad (void)
 
 {# import Apron.Var #}
 {# import Apron.Dimension #}
     
+#include <limits.h>
 #include "ap_environment.h"
 #include "wrappers.h" 
 
@@ -22,6 +23,8 @@ import           Foreign.C
 {#fun ap_environment_free_wrapper as ^ { `Environment' } -> `()' #}
 
 {#fun ap_environment_copy_wrapper as ^ { `Environment' } -> `Environment' #}
+
+{#fun print_environment as ^ { `Environment' } -> `()' #}
 
 ------ name_of_dim_alloc: not allowing, unsized array in struct
 ------ name_of_dim_free: not allowing, unsized array in struct
@@ -54,7 +57,7 @@ apEnvironmentAlloc idims rdims = do
      where makeVarArray arr = newArray =<< traverse newCString arr
            freeVarArray ptr n = do
              strs <- peekArray n ptr
-             traverse free strs
+             void $ traverse free strs
              free ptr
 
 
@@ -74,7 +77,9 @@ apEnvironmentAlloc idims rdims = do
 
 {#fun ap_environment_hash as ^ { `Environment' } -> `CInt' #}   
 
--- skipping mem var, var of dim, gcc is very upset
+-- var of dim, gcc is very upset
+
+{#fun ap_environment_mem_var_wrapper as ^ { `Environment', %`Var'} -> `Bool' #}
 
 -- Least common enviroments and conversion permutations (NOT DOING)
 

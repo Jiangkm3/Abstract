@@ -11,9 +11,28 @@
 
 // Extra, designed for the bindings
 
-ap_var_t * make_var (char * str) {
-  return (ap_var_t *)str; 
+ap_var_t* make_var (char * str) {
+  ap_var_t* v = (ap_var_t*) malloc(sizeof(ap_var_t));
+  *v = str;
+  return v;
 }
+
+void print_environment (ap_environment_t* env) {
+  ap_environment_fdump(stdout, env);
+}
+
+void print_lincons1 (ap_lincons1_t* cons) {
+  ap_lincons1_fprint(stdout, cons);
+  printf("\n");
+}
+
+void print_linexpr1 (ap_linexpr1_t* a) {
+  ap_linexpr1_fprint(stdout, a);
+  printf("\n");
+}
+
+// tcons, texpr, interval, scalar have a printer
+
 
 void print_abstract1 (ap_manager_t * man, ap_abstract1_t * abs) {
   ap_abstract1_fprint(stdout, man, abs);
@@ -30,6 +49,10 @@ ap_environment_t* ap_environment_alloc_wrapper (char** name_of_intdim, size_t in
 }
 
 // Scalar
+
+void ap_scalar_print_wrapper (ap_scalar_t* a) {
+  ap_scalar_print_wrapper(a);
+}
 
 void ap_scalar_swap_wrapper (ap_scalar_t* a, ap_scalar_t* b) {
   ap_scalar_swap(a, b);
@@ -161,6 +184,12 @@ bool ap_texpr1_is_scalar_wrapper (ap_texpr1_t* e) {
 
 // Tcons
 
+ap_tcons1_t * ap_tcons1_make_wrapper (ap_constyp_t constyp,
+				      ap_texpr1_t* expr,
+				      ap_scalar_t* scalar) {
+  wrap_apron_fn(ap_tcons1_make, ap_tcons1_t, constyp, expr, scalar);
+}
+
 ap_tcons1_t * ap_tcons1_from_lincons1_wrapper (ap_lincons1_t* cons) {
   wrap_apron_fn(ap_tcons1_from_lincons1, ap_tcons1_t, cons);
 }
@@ -264,6 +293,10 @@ size_t ap_lincons1_array_size_wrapper (ap_lincons1_array_t* array) {
 
 ap_environment_t* ap_lincons1_array_envref_wrapper (ap_lincons1_array_t* array) {
   return ap_lincons1_array_envref(array);
+}
+
+void ap_lincons1_array_clear_index_wrapper (ap_lincons1_array_t* array, size_t index) {
+  ap_lincons1_array_clear_index(array, index);
 }
 
 ap_lincons1_t* ap_lincons1_array_get_wrapper (ap_lincons1_array_t* array,
@@ -403,7 +436,7 @@ bool ap_linexpr1_set_coeff_interval_wrapper (ap_linexpr1_t* expr, ap_var_t var, 
   return ap_linexpr1_set_coeff_interval(expr, var, itv);
 }
 
-bool ap_linexpr1_set_coeff_isnterval_scalar_wrapper (ap_linexpr1_t* expr, ap_var_t var, ap_scalar_t* inf, ap_scalar_t* sup) {
+bool ap_linexpr1_set_coeff_interval_scalar_wrapper (ap_linexpr1_t* expr, ap_var_t var, ap_scalar_t* inf, ap_scalar_t* sup) {
   return ap_linexpr1_set_coeff_interval_scalar(expr, var, inf, sup);
 }
 
@@ -539,21 +572,34 @@ ap_abstract1_t * ap_abstract1_substitute_texpr_array_wrapper (ap_manager_t* man,
 }
 
 ap_abstract1_t * ap_abstract1_of_lincons_array_wrapper (ap_manager_t* man,
-    ap_environment_t* env,
-    ap_lincons1_array_t* array) {
+							ap_environment_t* env,
+							ap_lincons1_array_t* array) {
   wrap_apron_fn(ap_abstract1_of_lincons_array, ap_abstract1_t, man, env, array);
 }
 
 ap_abstract1_t * ap_abstract1_of_tcons_array_wrapper (ap_manager_t* man,
-    ap_environment_t* env,
-    ap_tcons1_array_t* array) {
+						      ap_environment_t* env,
+						      ap_tcons1_array_t* array) {
   wrap_apron_fn(ap_abstract1_of_tcons_array, ap_abstract1_t, man, env, array);
 }
 
 ap_abstract1_t * ap_abstract1_unify_wrapper (ap_manager_t* man,
-    bool destructive,
-    ap_abstract1_t* a1,ap_abstract1_t* a2) {
+					     bool destructive,
+					     ap_abstract1_t* a1,ap_abstract1_t* a2) {
   wrap_apron_fn(ap_abstract1_unify, ap_abstract1_t, man, destructive, a1, a2); 
+}
+
+ap_abstract1_t* ap_abstract1_fold_wrapper(ap_manager_t* man,
+					  bool destructive, ap_abstract1_t* a,
+					  ap_var_t* tvar, size_t size) {
+  wrap_apron_fn(ap_abstract1_fold, ap_abstract1_t, man, destructive, a, tvar, size); 
+}
+
+ap_abstract1_t* ap_abstract1_expand_wrapper (ap_manager_t* man,
+    bool destructive, ap_abstract1_t* a,
+    ap_var_t var,
+    ap_var_t* tvar, size_t size) {
+  wrap_apron_fn(ap_abstract1_expand, ap_abstract1_t, man, destructive, a, var, tvar, size);
 }
 
 ap_abstract1_t * ap_abstract1_widening_wrapper (ap_manager_t* man,
@@ -566,4 +612,21 @@ ap_abstract1_t * ap_abstract1_closure_wrapper (ap_manager_t* man,
   wrap_apron_fn(ap_abstract1_closure, ap_abstract1_t, man, destructive, a);
 }
 
+ap_abstract1_t * ap_abstract1_change_environment_wrapper (ap_manager_t* man,
+							  bool destructive, ap_abstract1_t* a,
+							  ap_environment_t* nenv,
+							  bool project) {
+  wrap_apron_fn(ap_abstract1_change_environment, ap_abstract1_t, man, destructive, a, nenv, project);
+}
+
+ap_abstract1_t * ap_abstract1_minimize_environment_wrapper (ap_manager_t* man,
+							    bool destructive, ap_abstract1_t* a) {
+  wrap_apron_fn(ap_abstract1_minimize_environment, ap_abstract1_t, man, destructive, a);
+}
+
+ap_abstract1_t * ap_abstract1_rename_array_wrapper (ap_manager_t* man,
+						    bool destructive, ap_abstract1_t* a,
+						    ap_var_t* var, ap_var_t* nvar, size_t size) {
+  wrap_apron_fn(ap_abstract1_rename_array, ap_abstract1_t, man, destructive, a, var, nvar, size);
+}
 

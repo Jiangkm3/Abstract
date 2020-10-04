@@ -16,11 +16,11 @@ import Foreign.C
 ---- Lincons1
 
 {# enum define Constyp {
-  AP_CONS_EQ as CONS_EQ,
-  AP_CONS_SUPEQ as CONS_SUPEQ,
-  AP_CONS_SUP as CONS_SUP,
-  AP_CONS_EQMOD as CONS_EQMOD,
-  AP_CONS_DISEQ as CONS_DISEQ
+  AP_CONS_EQ as CONS_EQ,       -- /* equality constraint */        
+  AP_CONS_SUPEQ as CONS_SUPEQ, -- /* >= constraint */
+  AP_CONS_SUP as CONS_SUP,     -- /* > constraint */
+  AP_CONS_EQMOD as CONS_EQMOD, -- /* congruence equality constraint */
+  AP_CONS_DISEQ as CONS_DISEQ  -- /* disequality constraint */
 } deriving (Eq, Ord, Show) #}
 
 {#pointer *ap_lincons1_t as Lincons1 foreign newtype#}
@@ -33,15 +33,16 @@ import Foreign.C
 
 {#fun ap_lincons1_copy_wrapper as ^ { `Lincons1' } -> `Lincons1' #}
 
-{#fun ap_lincons1_is_unsat_wrapper as ^ { `Lincons1' } -> `Bool' #}
 
 {#fun ap_lincons1_clear as ^ { `Lincons1' } -> `()' #}
 
 {#fun ap_lincons1_free as ^ { `Lincons1' } -> `()' #}
 
+{#fun print_lincons1 as ^ { `Lincons1' } -> `()' #} 
+ 
 -- Tests
 
-{#fun ap_lincons1_is_unsat as ^ { `Lincons1' } -> `Bool' #}
+{#fun ap_lincons1_is_unsat_wrapper as ^ { `Lincons1' } -> `Bool' #}
 
 -- Access
 
@@ -79,6 +80,8 @@ import Foreign.C
 {#fun ap_lincons1_array_size_wrapper as ^ { `Lincons1Array' } -> `CULong' #}
 
 {#fun ap_lincons1_array_envref_wrapper as ^ { `Lincons1Array' } -> `Environment' #}
+
+{#fun ap_lincons1_array_clear_index_wrapper as ^ { `Lincons1Array', `CULong' } -> `()' #}
 
 {#fun ap_lincons1_array_get_wrapper as ^ { `Lincons1Array', `CULong' } -> `Lincons1' #}
 

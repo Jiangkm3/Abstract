@@ -1,5 +1,4 @@
 import Init
-import Example
 import AbstractMonad
 import Abstract1
 import Eval

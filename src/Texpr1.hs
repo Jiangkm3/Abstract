@@ -8,6 +8,7 @@ module Texpr1 ( Texpr1
               , texprMakeBinOp
               , texprFromLinexpr
               , texprCopy
+              , texprPrint
               -- * Tests
               , texprHasVar
               , texprIsConstant
@@ -20,11 +21,10 @@ module Texpr1 ( Texpr1
               ) where
 import           AbstractMonad
 import           Apron.Texpr1
-import           Apron.Var
 import           Coeff
 import           Control.Monad.State.Strict (liftIO)
 import           Linexpr1
-import           Types
+import           Types                      hiding (d, f, i, s)
 
 -- Constructors, etc
 
@@ -60,6 +60,9 @@ texprFromLinexpr = liftIO1 apTexpr1FromLinexpr1
 
 texprCopy :: Texpr1 -> Abstract Texpr1
 texprCopy = liftIO1 apTexpr1Copy
+
+texprPrint :: Texpr1 -> Abstract ()
+texprPrint = liftIO1 apTexpr1Print
 
 -- Tests
 

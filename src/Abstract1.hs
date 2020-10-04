@@ -1,13 +1,16 @@
 module Abstract1 ( Abstract1
-                 , abstractPrint
                  , abstractBottom
                  , abstractTop
                  , abstractOfLinconsArray
                  , abstractToLinconsArray
                  , abstractOfTconsArray
                  , abstractToTconsArray
-                 -- * Accessors
+                 , abstractPrint
+                 -- * Environment
                  , abstractGetEnvironment
+                 , abstractChangeEnvironment
+                 , abstractMinimizeEnvironment
+                 , abstractUpdateEnvironment
                  -- * Tests
                  , abstractIsTop
                  , abstractIsBottom
@@ -46,15 +49,40 @@ import           Apron.Lincons1
 import           Apron.Linexpr1
 import           Apron.Tcons1
 import           Apron.Texpr1
-import           Control.Monad.State.Strict (liftIO)
-import           Data.Word
+import           Apron.Var
+import           Control.Monad.State.Strict
+import           Foreign                    hiding (addForeignPtrFinalizer,
+                                             void)
 
--- Printing
+-- Internal infrastructure
 
-abstractPrint :: Abstract1 -> Abstract ()
-abstractPrint abs = do
-  man <- getManager
-  liftIO $ printAbstract1 man abs
+getAbstractVar :: Abstract1
+               -> VarName
+               -> Abstract Var
+getAbstractVar a v = do
+  env <- abstractGetEnvironment a
+  var <- varMake v
+  exists <- liftIO $ apEnvironmentMemVarWrapper env var
+  unless exists $
+    error $ unwords ["Variable", v, "does not exist in the abstract environment"]
+  return var
+
+getAbstractVars :: Abstract1
+                -> [VarName]
+                -> Abstract Var
+getAbstractVars a vns = do
+  -- replace this with something that doesn't allocate someday
+  forM_ vns $ getAbstractVar a
+  varsMake vns
+
+_newAbstractVar :: VarName -> Abstract Var
+_newAbstractVar = varMake
+
+newAbstractVars :: [VarName] -> Abstract Var
+newAbstractVars = varsMake
+
+makeAbstractArray :: [Abstract1] -> Abstract Abstract1
+makeAbstractArray as = error "Not yet implemented"
 
 -- Constructors
 
@@ -92,12 +120,48 @@ abstractOfTconsArray arr = do
   env <- getEnvironment
   liftIO $ apAbstract1OfTconsArrayWrapper man env arr
 
--- Accessors
+-- Printing
+
+abstractPrint :: Abstract1 -> Abstract ()
+abstractPrint a = do
+  man <- getManager
+  liftIO $ printAbstract1 man a
+
+-- Environment
 
 abstractGetEnvironment :: Abstract1 -> Abstract Environment
 abstractGetEnvironment a = do
   man <- getManager
   liftIO $ apAbstract1Environment man a
+
+-- | Change the abstract environment
+abstractChangeEnvironment :: Abstract1
+                          -> Environment
+                          -> Bool
+                          -> Abstract Abstract1
+abstractChangeEnvironment a env proj = do
+  man <- getManager
+  liftIO $ apAbstract1ChangeEnvironmentWrapper man False a env proj
+
+-- | Remove from the environment of the abstract value
+-- variables that are unconstrained in it.
+abstractMinimizeEnvironment :: Abstract1 -> Abstract Abstract1
+abstractMinimizeEnvironment a = do
+  man <- getManager
+  liftIO $ apAbstract1MinimizeEnvironmentWrapper man False a
+
+-- | Parallel renaming. The new variables should not interfere with
+-- the variables that are not renamed.
+abstractUpdateEnvironment :: Abstract1
+                          -> [VarName]
+                          -> [VarName]
+                          -> Abstract Abstract1
+abstractUpdateEnvironment a vns nvns = do
+  man <- getManager
+  vars <- getAbstractVars a vns
+  newVars <- newAbstractVars nvns
+  liftIO $ apAbstract1RenameArrayWrapper man False a vars newVars $ fromIntegral len
+  where len = length vns
 
 -- Tests
 
@@ -134,7 +198,7 @@ abstractSatTcons a c = do
 abstractVarIsUnconstrained :: Abstract1 -> VarName -> Abstract Bool
 abstractVarIsUnconstrained a v = do
   man <- getManager
-  var <- getVar v
+  var <- getAbstractVar a v
   liftIO $ apAbstract1IsVariableUnconstrained man a var
 
 -- Extracting properties
@@ -152,7 +216,7 @@ abstractBoundTexpr a t = do
 abstractBoundVar :: Abstract1 -> VarName -> Abstract Interval
 abstractBoundVar a v = do
   man <- getManager
-  var <- getVar v
+  var <- getAbstractVar a v
   liftIO $ apAbstract1BoundVariable man a var
 
 -- Operations
@@ -169,13 +233,15 @@ abstractJoin a1 a2 = do
   man <- getManager
   liftIO $ apAbstract1JoinWrapper man False a1 a2
 
-abstractArrayMeet :: Abstract1 -> Word32 -> Abstract Abstract1
-abstractArrayMeet a size = do
+abstractArrayMeet :: [Abstract1] -> Word32 -> Abstract Abstract1
+abstractArrayMeet as size = do
+  a <- makeAbstractArray as
   man <- getManager
   liftIO $ apAbstract1MeetArrayWrapper man a $ fromIntegral size
 
-abstractArrayJoin :: Abstract1 -> Word32 -> Abstract Abstract1
-abstractArrayJoin a size = do
+abstractArrayJoin :: [Abstract1] -> Word32 -> Abstract Abstract1
+abstractArrayJoin as size = do
+  a <- makeAbstractArray as
   man <- getManager
   liftIO $ apAbstract1JoinArrayWrapper man a $ fromIntegral size
 
@@ -213,10 +279,18 @@ abstractExpand :: Abstract1
                -> VarName
                -> [VarName]
                -> Abstract Abstract1
-abstractExpand = error "Not yet implemented"
+abstractExpand _a _v _vns = error "C2hs is unhappy with expand"
+  -- man <- getManager
+  -- var <- getAbstractVar a v
+  -- vars <- newAbstractVars vns
+  -- liftIO $ apAbstractExpandWrapper man False a var vars len
+  -- where len = length vnns
 
 abstractFold :: Abstract1 -> [VarName] -> Abstract Abstract1
-abstractFold = error "Not yet implemented"
+abstractFold a vns = do
+  man <- getManager
+  vars <- getAbstractVars a vns
+  liftIO $ apAbstract1FoldWrapper man False a vars (fromIntegral $ length vns)
 
 abstractWiden :: Abstract1 -> Abstract1 -> Abstract Abstract1
 abstractWiden a1 a2 = do
@@ -230,8 +304,8 @@ abstractClosure a = do
 
 -- | Assign a list of variables in the abstract domain to the evaluation
 -- a tree expression
-abstractAssignTexprArray :: Abstract1 -> VarName -> Texpr1 -> Word32 -> Abstract1 -> Abstract Abstract1
-abstractAssignTexprArray a1 v texpr size a2 = do
+abstractAssignTexprArray :: Abstract1 -> [VarName] -> Texpr1 -> Word32 -> Abstract1 -> Abstract Abstract1
+abstractAssignTexprArray a1 vs texpr size a2 = do
   man <- getManager
-  var <- getVar v
+  var <- getVar (vs !! 0)
   liftIO $ apAbstract1AssignTexprArrayWrapper man False a1 var texpr (fromIntegral size) a2

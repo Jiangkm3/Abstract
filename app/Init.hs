@@ -5,7 +5,6 @@ import           Language.C.Syntax.AST
 import           Parser
 import           Symbol
 import           Abstract1
-import           Abstract
 import           AbstractMonad
 
 -- | A simple user-defined AST annotation type

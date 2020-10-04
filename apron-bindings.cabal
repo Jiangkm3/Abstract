@@ -35,7 +35,6 @@ library
   Includes: wrappers.h
   Install-includes: wrappers.h
   exposed-modules:
-      Apron
       Num.Mpfr
       Apron.Manager
       Apron.Var
@@ -55,6 +54,7 @@ library
       Apron.Abstract1
       AbstractMonad
       Types
+      Environment                  
       Coeff
       Interval            
       Linexpr1
@@ -62,9 +62,8 @@ library
       Texpr1
       Tcons1            
       Abstract1
-      Abstract
-      Examples.Example                         
-      Lib                  
+      Apron
+      Examples.Example1
   other-modules:
       Paths_apron_bindings
   hs-source-dirs:
@@ -87,7 +86,6 @@ executable apron-bindings-exe
       Init
       Parser
       Symbol
-      Example
       Eval
       Printer
   hs-source-dirs:
@@ -97,7 +95,7 @@ executable apron-bindings-exe
       language-c
     , apron-bindings
     , pretty
-    , mtl
+    , mtl >= 2.2.2                
     , base >=4.7 && <5
   default-language: Haskell2010
 

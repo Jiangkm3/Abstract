@@ -2,6 +2,7 @@ module Lincons1 ( Lincons1
                 , linconsMake
                 , linconsMakeWithScalar
                 , linconsCopy
+                , linconsPrint
                 -- * Tests
                 , linconsIsUnsat
                 -- * Access
@@ -32,13 +33,12 @@ import           Apron.Lincons1
 import           Apron.Linexpr1
 import           Apron.Scalar
 import           Coeff
-import           Control.Monad              (when)
+import           Control.Monad              (void, unless)
 import           Control.Monad.State.Strict (liftIO)
 import           Data.List                  (nub)
 import           Data.Word
 import           Interval
-import           Linexpr1
-import           Types
+import           Types                      hiding (d, f, i, s)
 
 -- | Make a new constraint of the given type with the given expression, with no scalar.
 linconsMake :: Constyp
@@ -55,6 +55,9 @@ linconsMakeWithScalar = liftIO3 apLincons1MakeWrapper
 
 linconsCopy :: Lincons1 -> Abstract Lincons1
 linconsCopy = liftIO1 apLincons1CopyWrapper
+
+linconsPrint :: Lincons1 -> Abstract ()
+linconsPrint = liftIO1 printLincons1
 
 -- Tests
 
@@ -73,8 +76,10 @@ linconsGetLinexpr :: Lincons1 -> Abstract Linexpr1
 linconsGetLinexpr = liftIO1 apLincons1Linexpr1refWrapper
 
 -- | Set the constant of the linear constraint.
-linconsSetConstant :: Lincons1 -> Coeff -> Abstract ()
-linconsSetConstant = liftIO2 apLincons1SetCstWrapper
+linconsSetConstant :: Lincons1 -> Value -> Abstract ()
+linconsSetConstant c v = do
+  coeff <- coeffMake v
+  liftIO $ apLincons1SetCstWrapper c coeff
 
 -- | Get the constant of the linear constraint.
 linconsGetConstant :: Lincons1 -> Abstract Coeff
@@ -89,19 +94,15 @@ linconsGetCoeff c name = do
   liftIO $ apLincons1Coeffref c var
 
 -- | Set the coefficients of variables var in the constraint.
--- Return true if any var is unknown in the environment.
-linconsSetCoeffs :: Lincons1 -> [(VarName,Value)] -> Abstract Bool
-linconsSetCoeffs c vs = do
-  succs <- mapM (uncurry $ linconsSetCoeff c) vs
-  return $ or succs
+linconsSetCoeffs :: Lincons1 -> [(VarName,Value)] -> Abstract ()
+linconsSetCoeffs c vs = mapM_ (uncurry $ linconsSetCoeff c) vs
 
 -- | Set the coefficient of variable var in the constraint.
---  Return true if var is unknown in the environment.
-linconsSetCoeff :: Lincons1 -> VarName -> Value -> Abstract Bool
+linconsSetCoeff :: Lincons1 -> VarName -> Value -> Abstract ()
 linconsSetCoeff c name v = do
   coeff <- coeffMake v
   var <- getVar name
-  liftIO $ apLincons1SetCoeffWrapper c var coeff
+  void $ liftIO $ apLincons1SetCoeffWrapper c var coeff
 
 linconsSetCoeffInterval :: Lincons1 -> VarName -> Interval -> Abstract ()
 linconsSetCoeffInterval = undefined
@@ -122,15 +123,14 @@ linconsArraySize arr = do
 
 -- | Clear the constraint at index index.
 linconsArrayClearIndex :: Lincons1Array -> Word32 -> Abstract ()
-linconsArrayClearIndex = undefined
--- linconsArrayClearIndex arr i = liftIO $ apLincons1ArrayClearIndexWrapper arr $ fromIntegral i
+linconsArrayClearIndex arr i = liftIO $ apLincons1ArrayClearIndexWrapper arr $ fromIntegral i
 
 -- | Clear the constraints the the indecies idxs
 linconsArrayClearIndecies :: Lincons1Array -> [Word32] -> Abstract ()
 linconsArrayClearIndecies arr idxs = do
-  when (nub idxs == idxs) $ error $ unwords [ "Tried to set index multiple times:"
-                                            , show idxs
-                                            ]
+  unless (nub idxs == idxs) $ error $ unwords [ "Tried to clear index multiple times:"
+                                              , show idxs
+                                              ]
   mapM_ (linconsArrayClearIndex arr) idxs
 
 -- | Return the linear constraint of the given index.
@@ -144,20 +144,8 @@ linconsArraySetIndex arr i c = liftIO $ apLincons1ArraySet arr (fromIntegral i) 
 -- | Fill in the indexies of the array with the constraints.
 linconsArraySetIndecies :: Lincons1Array -> [(Word32, Lincons1)] -> Abstract ()
 linconsArraySetIndecies arr cs = do
-  when (nub idxs == idxs) $ error $ unwords [ "Tried to set index multiple times:"
-                                            , show idxs
-                                            ]
+  unless (nub idxs == idxs) $ error $ unwords [ "Tried to set index multiple times:"
+                                              , show idxs
+                                              ]
   mapM_ (uncurry $ linconsArraySetIndex arr) cs
   where idxs = map fst cs
-
-
-
-
-
-
-
-
-
-
-
-

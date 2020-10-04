@@ -1,9 +1,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 module Apron.Abstract1 where
-import           Apron.Environment
-import           Foreign
 import           Foreign.C
-
+    
 #include "ap_abstract1.h"
 #include "wrappers.h" 
 
@@ -122,8 +120,18 @@ import           Foreign.C
 
 {#fun ap_abstract1_unify_wrapper as ^ { `Manager', `Bool', `Abstract1', `Abstract1' } -> `Abstract1' #}                      
 
+{#fun ap_abstract1_fold_wrapper as ^ { `Manager', `Bool', `Abstract1', `Var', `CULong' } -> `Abstract1' #}
+
+{#fun ap_abstract1_expand_wrapper as ^ { `Manager', `Bool', `Abstract1', %`Var', `Var', `CULong' } -> `Abstract1' #}
+
 {#fun ap_abstract1_widening_wrapper as ^ { `Manager', `Abstract1', `Abstract1' } -> `Abstract1' #}
 
 {#fun ap_abstract1_closure_wrapper as ^ { `Manager', `Bool', `Abstract1' } -> `Abstract1' #}
 
+-- Environment 
 
+{#fun ap_abstract1_change_environment_wrapper as ^ { `Manager', `Bool', `Abstract1', `Environment', `Bool' } -> `Abstract1' #}
+
+{#fun ap_abstract1_minimize_environment_wrapper as ^ { `Manager', `Bool', `Abstract1' } -> `Abstract1' #}
+
+{#fun ap_abstract1_rename_array_wrapper as ^ { `Manager', `Bool', `Abstract1', `Var', `Var', `CULong' } -> `Abstract1' #}
