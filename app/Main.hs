@@ -5,6 +5,6 @@ import Eval
 import Printer
 
 main = do
-  iast <- analyzeAST "/home/jiangkm3/apron-bindings/app/test.c"
+  iast <- analyzeAST "/home/jiangkm3/peppersieve/app/test.c"
   nast <- evalProg iast
   printTU nast

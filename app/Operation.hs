@@ -6,7 +6,9 @@ import AbstractMonad
 import Texpr1
 import Tcons1
 import Types
+import Apron.Scalar
 import Language.C.Syntax.AST
+import Control.Monad.State.Strict (liftIO)
 
 
 {- Binary Operations -}
@@ -19,7 +21,18 @@ evalBOpExpr bop l r
   | otherwise = error "Not Implemented"
 
 evalBOpCons :: CBinaryOp -> Texpr1 -> Texpr1 -> Abstract Tcons1
+evalBOpCons CGrOp t1 t2 = do
+  l <- texprMakeBinOp SUB_OP t1 t2 ROUND_INT ROUND_DOWN
+  r <- liftIO $ constrScalar 0
+  n <- tconsMake SUP_OP l r
+  return n
 evalBOpCons bop l r = error "Not Implemented"
+
+constrScalar :: Int -> IO Scalar
+constrScalar n = do
+  s <- apScalarAlloc
+  apScalarSetInt s 0
+  return s
 
 {- Simple BOp Case -}
 -- True if bop has an APRON correspondence

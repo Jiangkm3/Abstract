@@ -7,6 +7,7 @@ import Init
 import Operation
 import Types
 import Texpr1
+import Tcons1
 import Abstract1
 import AbstractMonad
 import Apron.Var
@@ -169,6 +170,8 @@ evalVar a v = do
 -- f is the name of Function we're currently in
 -- Convention: only check the scope when directly referencing the variable
 -- Either in assignment or variable expression
+-- Every constraint evaluated in evalExpr is treated as a number
+-- i.e. evaluate the constraint and return 0 or 1 based on result
 evalExpr :: Abstract1 -> String -> CExpression AbsState -> Abstract ExprSt
 
 evalExpr a f (CAssign CAssignOp (CVar (Ident v _ _) _) rhs _) = do
@@ -190,18 +193,30 @@ evalExpr a f (CVar (Ident v _ _) _) = do
   return (ntexpr, [])
 
 evalExpr a f (CConst (CIntConst n _)) = do
-  ntexpr <- texprMakeConstant $ ScalarVal $ IntValue $ (fromInteger (getCInteger n) :: GHC.Int.Int32)
+  ntexpr <- texprMakeConstant $ ScalarVal $ IntValue $ (fromInteger (getCInteger n) :: Int32)
   return (ntexpr, [])
 
-evalExpr a f (CBinary bop expr1 expr2 _) = do
-  (ltexpr, lpair) <- evalExpr a f expr1
-  (rtexpr, rpair) <- evalExpr a f expr2
-  ntexpr <- evalBOpExpr bop ltexpr rtexpr
-  return (ntexpr, lpair ++ rpair)
+evalExpr a f (CBinary bop expr1 expr2 _)
+  | isBOpCons bop = do
+    (ltexpr, lpair) <- evalExpr a f expr1
+    (rtexpr, rpair) <- evalExpr a f expr2
+    ncons <- evalBOpCons bop ltexpr rtexpr
+    arr <- tconsArrayMake 1
+    tconsArraySetIndex arr 0 ncons
+    abs <- abstractTconsArrayMeet a arr
+    b <- abstractIsBottom abs
+    ntexpr <- texprMakeConstant $ ScalarVal $ IntValue $ (1 - evalBool b)
+    return (ntexpr, lpair ++ rpair)
+
+  | otherwise = do
+    (ltexpr, lpair) <- evalExpr a f expr1
+    (rtexpr, rpair) <- evalExpr a f expr2
+    ntexpr <- evalBOpExpr bop ltexpr rtexpr
+    return (ntexpr, lpair ++ rpair)
 
 evalExpr a f e@(CUnary uop expr _) = do
   st@(rtexpr, rpair) <- evalExpr a f expr
-  ntexpr <- evalUOpExpr uop rtexpr 
+  ntexpr <- evalUOpExpr uop rtexpr
   case uop of
     CPreIncOp  -> incDecHelper expr f uop ntexpr st
     CPreDecOp  -> incDecHelper expr f uop ntexpr st
@@ -211,6 +226,12 @@ evalExpr a f e@(CUnary uop expr _) = do
     _          -> return (ntexpr, rpair)
 
 evalExpr _ _ _ = error "expression not impemented"
+
+evalBool :: Bool -> Int32
+evalBool b =
+  case b of
+    True  -> 1
+    False -> 0
 
 -- A helper function to deal with ++ and --
 incDecHelper :: CExpression AbsState -> String -> CUnaryOp -> Texpr1 -> ExprSt -> Abstract ExprSt
@@ -223,3 +244,18 @@ incDecHelper (CVar (Ident v _ _) _) f uop ntexpr (rtexpr, rpair) = do
     CPreDecOp  -> return (ntexpr, npair) -- --a
     CPostIncOp -> return (rtexpr, npair) -- a++
     CPostDecOp -> return (rtexpr, npair) -- a--
+
+-- Helper Function to determine if we are evaluating a tree expression
+-- or a tree constraint
+-- True if the operation is a constraint operation
+-- Logic Operations are ignored as they would be dealt otherwise
+isBOpCons :: CBinaryOp -> Bool
+isBOpCons bop =
+  case bop of
+    CLeOp  -> True
+    CGrOp  -> True
+    CLeqOp -> True
+    CGeqOp -> True
+    CEqOp  -> True
+    CNeqOp -> True
+    _      -> False
