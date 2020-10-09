@@ -4,6 +4,7 @@ module Eval where
 
 import GHC.Int
 import Init
+import Operation
 import Types
 import Texpr1
 import Abstract1
@@ -178,9 +179,9 @@ evalExpr a f (CAssign CAssignOp (CVar (Ident v _ _) _) rhs _) = do
 
 evalExpr a f (CAssign aop (CVar (Ident v _ _) _) rhs _) = do
   var <- findScope v f
-  (rtexpr, rpair) <- evalExpr a f rhs
   ltexpr <- texprMakeLeafVar var
-  ntexpr <- texprMakeBinOp (evalAOp aop) ltexpr rtexpr ROUND_INT ROUND_NEAREST
+  (rtexpr, rpair) <- evalExpr a f rhs
+  ntexpr <- evalBOpExpr (convertAOp aop) ltexpr rtexpr
   return (ntexpr, rpair ++ [(var, ntexpr)])
 
 evalExpr a f (CVar (Ident v _ _) _) = do
@@ -192,30 +193,33 @@ evalExpr a f (CConst (CIntConst n _)) = do
   ntexpr <- texprMakeConstant $ ScalarVal $ IntValue $ (fromInteger (getCInteger n) :: GHC.Int.Int32)
   return (ntexpr, [])
 
-evalExpr _ _ _ = error "expression not implemented"
+evalExpr a f (CBinary bop expr1 expr2 _) = do
+  (ltexpr, lpair) <- evalExpr a f expr1
+  (rtexpr, rpair) <- evalExpr a f expr2
+  ntexpr <- evalBOpExpr bop ltexpr rtexpr
+  return (ntexpr, lpair ++ rpair)
 
+evalExpr a f e@(CUnary uop expr _) = do
+  st@(rtexpr, rpair) <- evalExpr a f expr
+  ntexpr <- evalUOpExpr uop rtexpr 
+  case uop of
+    CPreIncOp  -> incDecHelper expr f uop ntexpr st
+    CPreDecOp  -> incDecHelper expr f uop ntexpr st
+    CPostIncOp -> incDecHelper expr f uop ntexpr st
+    CPostDecOp -> incDecHelper expr f uop ntexpr st
+    -- The Plus Operator literally does nothing
+    _          -> return (ntexpr, rpair)
 
-{- Operations -}
-evalAOp :: CAssignOp -> OpType
-evalAOp aop =
-  case aop of
-    CMulAssOp -> MUL_OP
-    CDivAssOp -> DIV_OP
-    CRmdAssOp -> MOD_OP
-    CAddAssOp -> ADD_OP
-    CSubAssOp -> SUB_OP
-    CShlAssOp -> error "Unsupported AssOp <<="
-    CShrAssOp -> error "Unsupported AssOp >>="
-    CAndAssOp -> error "Unsupported AssOp &="
-    CXorAssOp -> error "Unsupported AssOp ^="
-    COrAssOp  -> error "Unsupported AssOp |="
+evalExpr _ _ _ = error "expression not impemented"
 
-evalBOp ::  CBinaryOp -> OpType
-evalBOp bop =
-  case bop of
-    CMulOp -> MUL_OP
-    CDivOp -> DIV_OP
-    CRmdOp -> MOD_OP
-    CAddOp -> ADD_OP
-    CSubOp -> SUB_OP
-    _      -> error "Unsupported BinOp"
+-- A helper function to deal with ++ and --
+incDecHelper :: CExpression AbsState -> String -> CUnaryOp -> Texpr1 -> ExprSt -> Abstract ExprSt
+incDecHelper (CVar (Ident v _ _) _) f uop ntexpr (rtexpr, rpair) = do
+  -- expr must be in the form of CVar
+  var <- findScope v f
+  let npair = rpair ++ [(var, ntexpr)]
+  case uop of
+    CPreIncOp  -> return (ntexpr, npair) -- ++a
+    CPreDecOp  -> return (ntexpr, npair) -- --a
+    CPostIncOp -> return (rtexpr, npair) -- a++
+    CPostDecOp -> return (rtexpr, npair) -- a--

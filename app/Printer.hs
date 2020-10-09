@@ -58,7 +58,7 @@ printStmt (CReturn (Just expr) st) = do
   printSt st
 printStmt (CExpr Nothing _) = return()
 printStmt (CExpr (Just expr) st) = do
-  putStrLn (printExpr expr)
+  putStrLn ("Expr: " ++ printExpr expr)
   printSt st
 printStmt (CReturn Nothing st) = do
   putStrLn "Return Void"
