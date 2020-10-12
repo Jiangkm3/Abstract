@@ -136,25 +136,30 @@ evalCBIs abs f (cbi:cbis) = do
   (finalAbs, fCbis) <- evalCBIs nextAbs f cbis
   return (finalAbs, [nCbi] ++ fCbis)
 
--- Second Abstract1 for the state of the last iteration
-evalLoop :: Abstract1 -> String -> CStatement AbsState -> Abstract1 -> Abstract (Abstract1, CStatement AbsState)
+evalLoop :: Abstract1 -> String -> CStatement AbsState -> Abstract (Abstract1, CStatement AbsState)
 
-{-
 -- While Loop
-evalLoop a f whileStmt@(CWhile cond stmt False st) (Just lastAbs)
-  | = CWhile cond nStmt False nSt
-  | otherwise          = evalNestedHelper a f whileStmt (Just nAbs)
-  where itAbs          = evalCons a f cond False
-        (ntAbs, nStmt) = evalStmt itAbs f stmt
-        tAbs           = absFuncHelper itAbs ntAbs abstractWiden
-        nAbs           = absFuncHelper a tAbs abstractJoin
-		leqEval        = absLeqHelper nAbs lastAbs
-        finalAbs       = evalCons joinAbs f cond True
-        nSt            = setAbs finalAbs st
--}
+evalLoop lastAbs f whileStmt@(CWhile cond stmt False st) = do
+  itAbs          <- evalCons lastAbs f cond False
+  (ntAbs, nStmt) <- evalStmt itAbs f stmt
+  nAbs           <- abstractWiden lastAbs ntAbs
+  leqEval        <- abstractIsLeq nAbs lastAbs
+  finalAbs       <- evalCons lastAbs f cond True
+  let nSt = setAbs (return finalAbs) st
+  case leqEval of
+    True  -> return (finalAbs, CWhile cond nStmt False nSt)
+    False -> evalLoop nAbs f whileStmt
+
+-- Do-While Loop
+-- Evaluate the statement once and then do the while loop
+evalLoop a f whileStmt@(CWhile cond stmt True st) = do
+  (iAbs, iStmt) <- evalStmt a f stmt
+  let iSt = setAbs (return iAbs) st
+  (nAbs, (CWhile _ nStmt _ nSt)) <- evalLoop iAbs f (CWhile cond iStmt False iSt)
+  return (nAbs, CWhile cond nStmt True nSt)
 
 -- Other Loop
-evalLoop _ _ _ _ = error "Loop Statement not implemented"
+evalLoop _ _ _ = error "Loop Statement not implemented"
 
 evalStmt :: Abstract1 -> String -> CStatement AbsState -> Abstract (Abstract1, CStatement AbsState)
 
@@ -204,8 +209,8 @@ evalStmt a f (CIf cons tstmt (Just fstmt) st) = do
   return (nAbs, CIf cons ntStmt (Just nfStmt) nSt)
 
 -- Loops
-evalStmt a f stmt@(CWhile _ _ _ _) = evalLoop a f stmt a
-evalStmt a f stmt@(CFor _ _ _ _ _) = evalLoop a f stmt a
+evalStmt a f stmt@(CWhile _ _ _ _) = evalLoop a f stmt
+evalStmt a f stmt@(CFor _ _ _ _ _) = evalLoop a f stmt
 
 -- Others
 evalStmt a f stmt = error "Statement Case not implemented"

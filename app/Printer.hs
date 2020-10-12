@@ -88,7 +88,7 @@ printStmt (CIf expr tstmt fstmt st) = do
 printStmt (CWhile expr stmt False st) = do
   liftIO $ putStrLn ("While " ++ (printExpr expr) ++ ":\n")
   printStmt stmt
-  liftIO $ putStrLn "End While\n"
+  liftIO $ putStrLn "End While"
   printSt st
 -- Do-While Statement
 printStmt (CWhile expr stmt True st) = do
