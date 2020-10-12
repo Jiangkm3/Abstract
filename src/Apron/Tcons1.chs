@@ -4,7 +4,6 @@ module Apron.Tcons1 where
 import Foreign.C
     
 #include "ap_tcons1.h"
-#include "ap_tcons0.h"
 #include "wrappers.h"     
 
 {# import Apron.Environment #}
@@ -16,16 +15,7 @@ import Foreign.C
  
 {#pointer *ap_tcons1_t as Tcons1 foreign newtype#}
 
-{# enum define ConsType {
-    AP_CONS_EQ as EQ_OP,
-    AP_CONS_SUPEQ as SUPEQ_OP,
-    AP_CONS_SUP as SUP_OP,
-    AP_CONS_EQMOD as EQMOD_OP,
-    AP_CONS_DISEQ as DISEQ_OP
-} deriving (Eq, Ord, Show)
-#}
-
-{# fun ap_tcons1_make_wrapper as ^ { `ConsType', `Texpr1', `Scalar' } -> `Tcons1' #}
+{# fun ap_tcons1_make_wrapper as ^ { `Constyp', `Texpr1', `Scalar' } -> `Tcons1' #}
 
 {# fun ap_tcons1_from_lincons1_wrapper as ^ { `Lincons1' } -> `Tcons1' #}
 

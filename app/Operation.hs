@@ -7,6 +7,7 @@ import Texpr1
 import Tcons1
 import Types
 import Apron.Scalar
+import Apron.Lincons1
 import Language.C.Syntax.AST
 import Control.Monad.State.Strict (liftIO)
 
@@ -16,17 +17,27 @@ import Control.Monad.State.Strict (liftIO)
 evalBOpExpr :: CBinaryOp -> Texpr1 -> Texpr1 -> Abstract Texpr1
 evalBOpExpr bop l r
   | simpleBOp bop = do
-    n <- texprMakeBinOp (evalBOp bop) l r ROUND_INT ROUND_DOWN
+    n <- texprMakeBinOp (evalSimpleBOp bop) l r ROUND_INT ROUND_DOWN
     return n
   | otherwise = error "Not Implemented"
 
-evalBOpCons :: CBinaryOp -> Texpr1 -> Texpr1 -> Abstract Tcons1
-evalBOpCons CGrOp t1 t2 = do
-  l <- texprMakeBinOp SUB_OP t1 t2 ROUND_INT ROUND_DOWN
-  r <- liftIO $ constrScalar 0
-  n <- tconsMake SUP_OP l r
-  return n
-evalBOpCons bop l r = error "Not Implemented"
+-- Bool is to determine if we want !(constraint)
+-- True if we want !(constraint)
+evalBOpCons :: CBinaryOp -> Texpr1 -> Texpr1 -> Bool -> Abstract Tcons1
+evalBOpCons bop t1 t2 neg
+  -- For form a < b, we need to convert to (b - a) > 0
+  | (nbop == CLeOp) || (nbop == CLeqOp) = do
+    l <- texprMakeBinOp SUB_OP t2 t1 ROUND_INT ROUND_DOWN
+    r <- liftIO $ constrScalar 0
+    n <- tconsMake (evalConsBOp nbop) l r
+    return n
+  -- If the operation is not a constraint, evalConsBOp would throw an error
+  | otherwise = do
+    l <- texprMakeBinOp SUB_OP t1 t2 ROUND_INT ROUND_DOWN
+    r <- liftIO $ constrScalar 0
+    n <- tconsMake (evalConsBOp nbop) l r
+    return n
+  where nbop = negConsBOp bop neg
 
 constrScalar :: Int -> IO Scalar
 constrScalar n = do
@@ -47,8 +58,8 @@ simpleBOp bop =
     _      -> False
 
 --  Convert simple BOp to their APRON correspondence
-evalBOp :: CBinaryOp -> OpType
-evalBOp bop =
+evalSimpleBOp :: CBinaryOp -> OpType
+evalSimpleBOp bop =
   case bop of
     CMulOp -> MUL_OP
     CDivOp -> DIV_OP
@@ -57,6 +68,30 @@ evalBOp bop =
     CSubOp -> SUB_OP
     _      -> error ("Not a simple BOp" ++ show bop)
 
+evalConsBOp :: CBinaryOp -> Constyp
+evalConsBOp bop =
+  case bop of
+    CLeOp  -> CONS_SUP
+    CGrOp  -> CONS_SUP
+    CLeqOp -> CONS_SUPEQ
+    CGeqOp -> CONS_SUPEQ
+    CEqOp  -> CONS_EQ
+    CNeqOp -> CONS_DISEQ
+    _      -> error ("Not a constraint BOp" ++ show bop)
+
+-- If neg is true, revert the Constraint Operation
+negConsBOp :: CBinaryOp -> Bool -> CBinaryOp
+negConsBOp bop neg
+  | neg =
+    case bop of
+      CLeOp  -> CGeqOp
+      CGrOp  -> CLeqOp
+      CLeqOp -> CGrOp
+      CGeqOp -> CLeOp
+      CEqOp  -> CNeqOp
+      CNeqOp -> CEqOp
+      _      -> error "Not a constraint"
+  | otherwise = bop
 
 {- Assignment Operations -}
 

@@ -53,6 +53,8 @@ import           Apron.Var
 import           Control.Monad.State.Strict
 import           Foreign                    hiding (addForeignPtrFinalizer,
                                              void)
+import           Foreign.Concurrent
+import           Foreign.ForeignPtr.Unsafe
 
 -- Internal infrastructure
 
@@ -82,7 +84,17 @@ newAbstractVars :: [VarName] -> Abstract Var
 newAbstractVars = varsMake
 
 makeAbstractArray :: [Abstract1] -> Abstract Abstract1
-makeAbstractArray as = error "Not yet implemented"
+makeAbstractArray as = liftIO $ do
+  cptr <- doMakeArray
+  fptr <- castForeignPtr `liftM` newForeignPtr_ cptr
+  addForeignPtrFinalizer fptr $ free cptr
+  return $ Abstract1 $ fptr
+  where doMakeArray = do
+          newArray =<< traverse toPtr as
+        toPtr (Abstract1 fptr) = do
+          -- This is gross
+          touchForeignPtr fptr
+          return $ unsafeForeignPtrToPtr fptr
 
 -- Constructors
 
@@ -279,12 +291,12 @@ abstractExpand :: Abstract1
                -> VarName
                -> [VarName]
                -> Abstract Abstract1
-abstractExpand _a _v _vns = error "C2hs is unhappy with expand"
-  -- man <- getManager
-  -- var <- getAbstractVar a v
-  -- vars <- newAbstractVars vns
-  -- liftIO $ apAbstractExpandWrapper man False a var vars len
-  -- where len = length vnns
+abstractExpand a v vns = do
+  man <- getManager
+  var <- getAbstractVar a v
+  vars <- newAbstractVars vns
+  liftIO $ apAbstract1ExpandWrapper man False a var vars $ fromIntegral len
+  where len = length vns
 
 abstractFold :: Abstract1 -> [VarName] -> Abstract Abstract1
 abstractFold a vns = do

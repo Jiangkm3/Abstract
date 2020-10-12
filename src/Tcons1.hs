@@ -1,5 +1,4 @@
 module Tcons1 ( Tcons1
-              , ConsType(..)
               , tconsMake
               , tconsFromLincons
               , tconsCopy
@@ -29,11 +28,11 @@ import           Control.Monad              (void)
 import           Control.Monad.State.Strict (liftIO)
 import           Data.Word
 
-tconsMake :: ConsType
+tconsMake :: Constyp
           -> Texpr1
           -> Scalar
           -> Abstract Tcons1
-tconsMake c t s = liftIO $ apTcons1MakeWrapper c t s
+tconsMake = liftIO3 apTcons1MakeWrapper
 
 tconsFromLincons :: Lincons1
                  -> Abstract Tcons1
