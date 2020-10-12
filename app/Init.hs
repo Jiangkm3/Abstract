@@ -32,15 +32,9 @@ analyzeAST :: String -> IO (CTranslationUnit AbsState)
 analyzeAST name = do
   symT <- getSymT name
   let abs1 = astHelper symT
---  astPrinter abs1
   tu <- parseC name
   let initS = initTo abs1 tu
   return initS
-
-astPrinter :: Abstract Abstract1 -> IO()
-astPrinter abs1 = evalAbstract defaultState $ do
-  abs <- abs1
-  abstractPrint(abs)
 
 astHelper :: [String] -> Abstract Abstract1
 astHelper symT = do

@@ -30,38 +30,36 @@ import Control.Monad.State.Strict (liftIO)
 -- Get the initial state of Abstract_Top
 getInitSt :: Abstract Abstract1 -> Abstract Abstract1
 getInitSt st = do
-  abs <- st
-  abs1 <- abstractTop
-  return abs1
+  abs <- abstractTop
+  return abs
 
-evalProg :: CTranslationUnit AbsState -> IO (CTranslationUnit AbsState)
+evalProg :: CTranslationUnit AbsState -> Abstract (CTranslationUnit AbsState)
 evalProg (CTranslUnit extDecls (State a loc)) = do
-  let abs1 = getInitSt a
-  let nExtDecls = evalEDLst abs1 extDecls
-  return (CTranslUnit nExtDecls (State abs1 loc))
+  abs <- getInitSt a
+  nExtDecls <- evalEDLst abs extDecls
+  let nSt = State (return abs) loc
+  return (CTranslUnit nExtDecls nSt)
 
-evalEDLst :: Abstract Abstract1 -> [CExternalDeclaration AbsState] -> [CExternalDeclaration AbsState]
-evalEDLst preC [] = []
-evalEDLst preC (ed:eds) = [newED] ++ (evalEDLst newAbs eds)
-  where (newAbs, newED) = evalExtDecl preC ed
+evalEDLst :: Abstract1 -> [CExternalDeclaration AbsState] -> Abstract [CExternalDeclaration AbsState]
+evalEDLst _ []         = return []
+evalEDLst a (ed:eds) = do
+  (newAbs, newED) <- evalExtDecl a ed
+  nextEDs <- evalEDLst newAbs eds
+  return ([newED] ++ nextEDs)
 
-evalExtDecl :: Abstract Abstract1 -> CExternalDeclaration AbsState -> (Abstract Abstract1, CExternalDeclaration AbsState)
-evalExtDecl abs (CDeclExt a) = (nAbs, CDeclExt nDecl)
-  where (nAbs, nDecl) = evalDecl abs "" a
-evalExtDecl abs (CFDefExt a) = (nAbs, CFDefExt nFunc)
-  where (nAbs, nFunc) = evalFunc abs a
-evalExtDecl abs _            = error "Not Implemented"
+evalExtDecl :: Abstract1 -> CExternalDeclaration AbsState -> Abstract (Abstract1, CExternalDeclaration AbsState)
+evalExtDecl abs (CDeclExt a) = do
+  (nAbs, nDecl) <- evalDecl abs "" a
+  return (nAbs, CDeclExt nDecl)
+evalExtDecl abs (CFDefExt a) = do
+  (nAbs, nFunc) <- evalFunc abs a
+  return (nAbs, CFDefExt nFunc)
+evalExtDecl abs _            = error "CAsmExt not Implemented"
 
 -----
 
 {- Functions -}
--- ignore arguments for now
-evalFunc :: Abstract Abstract1 -> CFunctionDef AbsState -> (Abstract Abstract1, CFunctionDef AbsState)
-evalFunc preC (CFunDef a b@(CDeclr (Just (Ident f _ _)) _ _ _ _) c stmt st) =
-  (nAbs, CFunDef a b c nStmt newSt)
-  where (nAbs, nStmt) = evalStmt preC f stmt
-        newSt = setAbs nAbs st
-
+-- Find the actual name of a variable
 -- Assume that the variable must exist
 -- We only need to find if it is local or global
 findScope :: String -> String -> Abstract String
@@ -74,22 +72,31 @@ findScope varName funcName
       True  -> return localName
       False -> return varName
 
+-- ignore arguments for now
+evalFunc :: Abstract1 -> CFunctionDef AbsState -> Abstract (Abstract1, CFunctionDef AbsState)
+evalFunc abs (CFunDef a b@(CDeclr (Just (Ident f _ _)) _ _ _ _) c stmt st) = do
+  (nAbs, nStmt) <- evalStmt abs f stmt
+  let nSt = setAbs (return nAbs) st
+  return (nAbs, CFunDef a b c nStmt nSt)
+
 -----
 
 {- Declarations -}
--- Right now that we don't care about types, the only concern is
--- with the initializers and expressions
--- Variable f for the name of the function we're in so we can determine
--- the scope. f = "" indicates that this is a global environment
-evalDecl :: Abstract Abstract1 -> String -> CDeclaration AbsState -> (Abstract Abstract1, CDeclaration AbsState)
-evalDecl preC f (CDecl a b (State _ loc)) = (nAbs, CDecl a b (State nAbs loc))
-  where nAbs = foldl (\a b -> evalDeclHelper a f b) preC b
-
 absAssgHelper :: Abstract Abstract1 -> (VarName, Texpr1) -> Abstract Abstract1
 absAssgHelper a (v, t) = do
   a1 <- a
   a2 <- abstractTop
   abstractAssignTexprArray a1 [v] t 1 a2
+
+-- Right now that we don't care about types, the only concern is
+-- with the initializers and expressions
+-- Variable f for the name of the function we're in so we can determine
+-- the scope. f = "" indicates that this is a global environment
+evalDecl :: Abstract1 -> String -> CDeclaration AbsState -> Abstract (Abstract1, CDeclaration AbsState)
+evalDecl abs f (CDecl a b st) = do
+  nAbs <- foldl (\a b -> evalDeclHelper a f b) (return abs) b
+  let nSt = setAbs (return nAbs) st
+  return (nAbs, CDecl a b nSt)
 
 -- Process every variable declaration separately
 evalDeclHelper :: Abstract Abstract1 -> String -> (Maybe (CDeclarator AbsState), Maybe (CInitializer AbsState), Maybe (CExpression AbsState)) -> Abstract Abstract1
@@ -103,7 +110,7 @@ evalDeclHelper a f (Just (CDeclr (Just (Ident v _ _)) _ _ _ _), (Just (CInitExpr
   let npair = pair ++ [(var, texpr)]
   foldl absAssgHelper a npair
 
-evalDeclHelper _ _ _ = error "Not implemented"
+evalDeclHelper _ _ _ = error "Declaration type not implemented"
 
 -----
 
@@ -113,78 +120,28 @@ setAbs :: Abstract Abstract1 -> AbsState -> AbsState
 setAbs a (State _ loc) = State a loc
 
 -- A helper function to evaluate compounds
-evalCBI :: Abstract Abstract1 -> String -> CCompoundBlockItem AbsState -> (Abstract Abstract1, CCompoundBlockItem AbsState)
-evalCBI abs f (CBlockStmt stmt) = (nAbs, CBlockStmt nStmt)
-  where (nAbs, nStmt) = evalStmt abs f stmt
-evalCBI abs f (CBlockDecl decl) = (nAbs, CBlockDecl nDecl)
-  where (nAbs, nDecl) = evalDecl abs f decl
-evalCBI _ _ _ = error "Not Implemented"
+evalCBI :: Abstract1 -> String -> CCompoundBlockItem AbsState -> Abstract (Abstract1, CCompoundBlockItem AbsState)
+evalCBI abs f (CBlockStmt stmt) = do
+  (nAbs, nStmt) <- evalStmt abs f stmt
+  return (nAbs, CBlockStmt nStmt)
+evalCBI abs f (CBlockDecl decl) = do
+  (nAbs, nDecl) <- evalDecl abs f decl
+  return (nAbs, CBlockDecl nDecl)
+evalCBI _ _ _ = error "CBI nested function type not implemented"
 
-evalCBIs :: Abstract Abstract1 -> String -> [CCompoundBlockItem AbsState] -> (Abstract Abstract1, [CCompoundBlockItem AbsState])
-evalCBIs abs f [] = (abs, [])
-evalCBIs abs f (cbi:cbis) = (finalAbs, [nCbi] ++ fCbis)
-  where (nextAbs, nCbi)   = evalCBI abs f cbi
-        (finalAbs, fCbis) = evalCBIs nextAbs f cbis
+evalCBIs :: Abstract1 -> String -> [CCompoundBlockItem AbsState] -> Abstract (Abstract1, [CCompoundBlockItem AbsState])
+evalCBIs abs f [] = return (abs, [])
+evalCBIs abs f (cbi:cbis) = do
+  (nextAbs, nCbi)   <- evalCBI abs f cbi
+  (finalAbs, fCbis) <- evalCBIs nextAbs f cbis
+  return (finalAbs, [nCbi] ++ fCbis)
 
-evalStmtHelper :: Abstract Abstract1 -> String -> CStatement AbsState -> Abstract Abstract1
+-- Second Abstract1 for the state of the last iteration
+evalLoop :: Abstract1 -> String -> CStatement AbsState -> Abstract1 -> Abstract (Abstract1, CStatement AbsState)
 
-evalStmtHelper a _ (CExpr Nothing _) = a
--- We can disregard the side effect of the expression
-evalStmtHelper a f (CExpr (Just expr) st) = do
-  abs1 <- a
-  (_, pair) <- evalExpr abs1 f expr
-  foldl absAssgHelper a pair
-
-evalStmtHelper a f (CReturn Nothing _) = a
-evalStmtHelper a f (CReturn (Just expr) st) = do
-  abs1 <- a
-  (texpr, pair) <- evalExpr abs1 f expr
-  let npair = pair ++ [(f, texpr)]
-  foldl absAssgHelper a npair
-
-evalStmtHelper _ _ _ = error "Not Implemented"
-
-absLeqHelper :: Abstract Abstract1 -> Abstract Abstract1 -> Abstract Bool
-absEqualityHelper a1 a2 = do
-  abs1 <- a1
-  abs2 <- a2
-  b <- abstractIsLeq a1 a2
-  return b
-
-absFuncHelper :: Abstract Abstract1 -> Abstract Abstract1 -> (Abstract1 -> Abstract1 -> Abstract Abstract1) -> Abstract Abstract1
-absFuncHelper a1 a2 f = do
-  abs1 <- a1
-  abs2 <- a2
-  abs3 <- f abs1 abs2
-  return abs3
-
---  We don't use monad here because we don't want the Translation Unit
---  to be under the Abstract Monad
---  Dealing with If, while and for
---  Maybe (Abstract Abstract1) is to record the last iteration when doing
---  fixpoint analysis
-evalNestedHelper :: Abstract Abstract1 -> String -> CStatement AbsState -> Maybe (Abstract Abstract1) -> CStatement AbsState
-evalNestedHelper a f (CIf cons tstmt Nothing st) _ = 
-  CIf cons ntStmt Nothing nSt
-  where itAbs           = evalCons a f cons False
-        (ntAbs, ntStmt) = evalStmt itAbs f tstmt
-        nAbs            = absFuncHelper a ntAbs abstractJoin
-        nSt             = setAbs nAbs st
-evalNestedHelper a f (CIf cons tstmt (Just fstmt) st) _ = 
-  CIf cons ntStmt (Just nfStmt) nSt
-  where itAbs           = evalCons a f cons False
-        ifAbs           = evalCons a f cons True
-        (ntAbs, ntStmt) = evalStmt itAbs f tstmt
-        (nfAbs, nfStmt) = evalStmt ifAbs f fstmt
-        nAbs            = absFuncHelper ntAbs nfAbs abstractJoin
-        nSt             = setAbs nAbs st
-
--- DoWhile
--- evalNestedHelper a f (CWhile cond stmt True st) =
--- While
--- We want to widen the true case (while loop executed) and join it with the
--- false case (while loop not executed)
-evalNestedHelper a f whileStmt@(CWhile cond stmt False st) (Just lastAbs)
+{-
+-- While Loop
+evalLoop a f whileStmt@(CWhile cond stmt False st) (Just lastAbs)
   | = CWhile cond nStmt False nSt
   | otherwise          = evalNestedHelper a f whileStmt (Just nAbs)
   where itAbs          = evalCons a f cond False
@@ -194,27 +151,64 @@ evalNestedHelper a f whileStmt@(CWhile cond stmt False st) (Just lastAbs)
 		leqEval        = absLeqHelper nAbs lastAbs
         finalAbs       = evalCons joinAbs f cond True
         nSt            = setAbs finalAbs st
+-}
 
-evalNestedHelper _ _ _ _ = error "Invalid Nested Statement"
+-- Other Loop
+evalLoop _ _ _ _ = error "Loop Statement not implemented"
 
-evalStmt :: Abstract Abstract1 -> String -> CStatement AbsState -> (Abstract Abstract1, CStatement AbsState)
-evalStmt a f (CCompound ids cbis st) = (nAbs, CCompound ids ncbis newSt)
-  where (nAbs, ncbis) = evalCBIs a f cbis
-        newSt = setAbs nAbs st
-evalStmt a f stmt@(CIf _ _ _ _) = (nAbs, nStmt)
-  where nStmt@(CIf _ _ _ (State nAbs _)) = evalNestedHelper a f stmt Nothing
-evalStmt a f stmt@(CWhile _ _ _ _) = (nAbs, nStmt)
-  where nStmt@(CWhile _ _ _ (State nAbs _)) = evalNestedHelper a f stmt (Just a)
-evalStmt a f stmt =
-  case stmt of
-    CExpr Nothing st       -> (nAbs, CExpr Nothing (newSt st))
-    CExpr (Just expr) st   -> (nAbs, CExpr (Just expr) (newSt st))
-    CReturn Nothing st     -> (nAbs, CReturn Nothing (newSt st))
-    CReturn (Just expr) st -> (nAbs, CReturn (Just expr) (newSt st))
-    _                      -> error "Not Implemented"
+evalStmt :: Abstract1 -> String -> CStatement AbsState -> Abstract (Abstract1, CStatement AbsState)
 
-  where nAbs          = evalStmtHelper a f stmt
-        newSt         = \a -> setAbs nAbs a
+-- Expression Statements
+evalStmt a _ (CExpr Nothing st) = do
+  let nSt = setAbs (return a) st
+  return (a, CExpr Nothing nSt)
+-- We can disregard the side effect of the expression
+evalStmt a f (CExpr (Just expr) st) = do
+  (_, pair) <- evalExpr a f expr
+  nAbs <- foldl absAssgHelper (return a) pair
+  let nSt = setAbs (return nAbs) st
+  return (nAbs, CExpr (Just expr) nSt)
+
+-- Return Statements
+evalStmt a _ (CReturn Nothing st) = do
+  let nSt = setAbs (return a) st
+  return (a, CReturn Nothing nSt)
+evalStmt a f (CReturn (Just expr) st) = do
+  (texpr, pair) <- evalExpr a f expr
+  let npair = pair ++ [(f, texpr)]
+  nAbs <- foldl absAssgHelper (return a) npair
+  let nSt = setAbs (return nAbs) st
+  return (nAbs, CReturn (Just expr) nSt)
+
+-- Compound Statments
+evalStmt a f (CCompound ids cbis st) = do
+  (nAbs, ncbis) <- evalCBIs a f cbis
+  let nSt = setAbs (return nAbs) st
+  return (nAbs, CCompound ids ncbis nSt)
+
+-- If Statements
+evalStmt a f (CIf cons tstmt Nothing st) = do
+  itAbs           <- evalCons a f cons False
+  (ntAbs, ntStmt) <- evalStmt itAbs f tstmt
+  nfAbs           <- evalCons a f cons True
+  nAbs            <- abstractJoin ntAbs nfAbs
+  let nSt = setAbs (return nAbs) st
+  return (nAbs, CIf cons ntStmt Nothing nSt)
+evalStmt a f (CIf cons tstmt (Just fstmt) st) = do
+  itAbs           <- evalCons a f cons False
+  ifAbs           <- evalCons a f cons True
+  (ntAbs, ntStmt) <- evalStmt itAbs f tstmt
+  (nfAbs, nfStmt) <- evalStmt ifAbs f fstmt
+  nAbs            <- abstractJoin ntAbs nfAbs
+  let nSt = setAbs (return nAbs) st
+  return (nAbs, CIf cons ntStmt (Just nfStmt) nSt)
+
+-- Loops
+evalStmt a f stmt@(CWhile _ _ _ _) = evalLoop a f stmt a
+evalStmt a f stmt@(CFor _ _ _ _ _) = evalLoop a f stmt a
+
+-- Others
+evalStmt a f stmt = error "Statement Case not implemented"
 
 -----
 
@@ -222,12 +216,6 @@ evalStmt a f stmt =
 -- A special return type for evaluating an expression
 -- An expression can generate a syntax tree, but might also involve assignments
 type ExprSt = (Texpr1, [(VarName, Texpr1)])
-
-evalVar :: Abstract Abstract1 -> VarName -> Abstract Var
-evalVar a v = do
-  abs <- a
-  var <- getVar v
-  return var
 
 -- f is the name of Function we're currently in
 -- Convention: only check the scope when directly referencing the variable
@@ -314,10 +302,9 @@ incDecHelper (CVar (Ident v _ _) _) f uop ntexpr (rtexpr, rpair) = do
 -- Bool is to determine if we want !(constraint)
 -- True if we want !(constraint)
 -- evalCons takes in Abstract Abstract1, as oppose to evalExpr taking Abstract1
-evalCons :: Abstract Abstract1 -> String -> CExpression AbsState -> Bool -> Abstract Abstract1
-evalCons abs f (CBinary bop expr1 expr2 _) neg
+evalCons :: Abstract1 -> String -> CExpression AbsState -> Bool -> Abstract Abstract1
+evalCons a f (CBinary bop expr1 expr2 _) neg
   | isBOpCons bop = do
-    a <- abs
     (ltexpr, lpair) <- evalExpr a f expr1
     (rtexpr, rpair) <- evalExpr a f expr2
     lAbs <- foldl absAssgHelper (return a) (lpair ++ rpair)
@@ -326,8 +313,9 @@ evalCons abs f (CBinary bop expr1 expr2 _) neg
     tconsArraySetIndex arr 0 ntcons
     nAbs <- abstractTconsArrayMeet lAbs arr
     return nAbs
-    
+   
   | otherwise     = error "Int to Bool Conversion not supported"
+
 evalCons a f _ _ = error "Int to Bool Conversion not supported"
 
 -- Helper Function to determine if we are evaluating a tree expression

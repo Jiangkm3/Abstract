@@ -5,6 +5,7 @@ import Eval
 import Printer
 
 main = do
-  iast <- analyzeAST "/home/jiangkm3/peppersieve/app/test.c"
-  nast <- evalProg iast
-  printTU nast
+  let fileName = "/home/jiangkm3/peppersieve/app/test.c"
+  iast <- analyzeAST fileName
+  let nast = evalProg iast
+  initPrinter nast fileName

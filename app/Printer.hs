@@ -3,32 +3,43 @@ module Printer where
 import Init
 import Abstract1
 import AbstractMonad
+import Symbol
 import Language.C.Data.Ident
 import Language.C.Syntax.AST
 import Language.C.Syntax.Constants
+import Control.Monad.State.Strict (liftIO)
+
+initPrinter :: Abstract (CTranslationUnit AbsState) -> String -> IO ()
+initPrinter atu name = evalAbstract defaultState $ do
+  symT <- liftIO $ getSymT name
+  initAbstractState Intervals symT []
+  tu <- atu
+  printTU tu
 
 -- Helper function to print the varstate
-printSt :: AbsState -> IO()
-printSt (State st _) = astPrinter st
+printSt :: AbsState -> Abstract ()
+printSt (State a _) = do
+  abs <- a
+  abstractPrint(abs)
 
-printTU :: CTranslationUnit AbsState -> IO ()
+printTU :: CTranslationUnit AbsState -> Abstract ()
 printTU (CTranslUnit [] _) = do
   return ()
 printTU (CTranslUnit (ed:eds) a@(State b _)) = do
   printED ed
   printTU (CTranslUnit eds a)
 
-printED :: CExternalDeclaration AbsState -> IO ()
+printED :: CExternalDeclaration AbsState -> Abstract ()
 printED (CDeclExt cdecl) = do
   printDecl cdecl
-  putStrLn ""
+  liftIO $ putStrLn ""
 printED (CFDefExt (CFunDef _ (CDeclr (Just (Ident name _ _)) derived _ _ _) _ cstmt st)) = do
-  putStrLn ("Function " ++ name ++ ":")
-  putStrLn ("Arguments:" ++ (unwords (map printDerivedDecl derived)))
-  putStrLn ""
+  liftIO $ putStrLn ("Function " ++ name ++ ":")
+  liftIO $ putStrLn ("Arguments:" ++ (unwords (map printDerivedDecl derived)))
+  liftIO $ putStrLn ""
   printStmt cstmt
-  putStrLn "End Function\n\n--"
-  putStrLn ""
+  liftIO $ putStrLn "End Function\n\n--"
+  liftIO $ putStrLn ""
 printED _ = do
   return ()
 
@@ -41,9 +52,9 @@ printArgs (CDecl _ vars _) = " " ++ (unwords (map (\(Just (CDeclr (Just (Ident v
 
 -- Function and Statement Level
 
-printDecl :: CDeclaration AbsState -> IO ()
+printDecl :: CDeclaration AbsState -> Abstract ()
 printDecl (CDecl _ vars st) = do
-  putStrLn ("Decl: " ++ (init (unwords (map printDeclHelper vars))))
+  liftIO $ putStrLn ("Decl: " ++ (init (unwords (map printDeclHelper vars))))
   printSt st
 
 printDeclHelper :: (Maybe (CDeclarator AbsState), Maybe (CInitializer AbsState), Maybe (CExpression AbsState)) -> String
@@ -51,68 +62,68 @@ printDeclHelper (Just (CDeclr (Just (Ident varName _ _)) _ _ _ _), Nothing, Noth
 printDeclHelper (Just (CDeclr (Just (Ident varName _ _)) _ _ _ _), (Just (CInitExpr expr _)), Nothing) = varName ++ " = " ++ (printExpr expr) ++ ","
 pritnDeclHelper _ = error "Declaration case not implemented"
 
-printStmt :: CStatement AbsState -> IO ()
+printStmt :: CStatement AbsState -> Abstract ()
 printStmt (CCompound _ cbis _)     = printCBIs cbis
 printStmt (CReturn (Just expr) st) = do
-  putStrLn ("Return: " ++ printExpr expr)
+  liftIO $ putStrLn ("Return: " ++ printExpr expr)
   printSt st
 printStmt (CExpr Nothing _) = return()
 printStmt (CExpr (Just expr) st) = do
-  putStrLn ("Expr: " ++ printExpr expr)
+  liftIO $ putStrLn ("Expr: " ++ printExpr expr)
   printSt st
 printStmt (CReturn Nothing st) = do
-  putStrLn "Return Void"
+  liftIO $ putStrLn "Return Void"
   printSt st
 -- fstmt is of type Maybe (CStatmenet AbsState)
 printStmt (CIf expr tstmt fstmt st) = do
-  putStrLn ("If " ++ (printExpr expr) ++ ":\n")
+  liftIO $ putStrLn ("If " ++ (printExpr expr) ++ ":\n")
   printStmt tstmt
-  putStrLn "Else:\n"
+  liftIO $ putStrLn "Else:\n"
   case fstmt of
-    Nothing -> putStrLn "Nothing or not Evaluated\n"
+    Nothing -> liftIO $ putStrLn "Nothing or not Evaluated\n"
     Just a -> printStmt a
-  putStrLn "End If"
+  liftIO $ putStrLn "End If"
   printSt st
 -- While Statement
 printStmt (CWhile expr stmt False st) = do
-  putStrLn ("While " ++ (printExpr expr) ++ ":\n")
+  liftIO $ putStrLn ("While " ++ (printExpr expr) ++ ":\n")
   printStmt stmt
-  putStrLn "End While\n"
+  liftIO $ putStrLn "End While\n"
   printSt st
 -- Do-While Statement
 printStmt (CWhile expr stmt True st) = do
-  putStrLn "Do:\n"
+  liftIO $ putStrLn "Do:\n"
   printStmt stmt
-  putStrLn ("While " ++ (printExpr expr) ++ "\n")
-  putStrLn "End Do-While"
+  liftIO $ putStrLn ("While " ++ (printExpr expr) ++ "\n")
+  liftIO $ putStrLn "End Do-While"
   printSt st
 printStmt (CFor init bound step stmt st) = do
-  putStrLn "For:"
+  liftIO $ putStrLn "For:"
   case init of
-    Left Nothing           -> putStrLn "Init: None"
-    Left (Just expr)       -> putStrLn ("Init: " ++ (printExpr expr))
+    Left Nothing           -> liftIO $ putStrLn "Init: None"
+    Left (Just expr)       -> liftIO $ putStrLn ("Init: " ++ (printExpr expr))
     Right decl             -> printDecl decl
   case bound of
-    Nothing   -> putStrLn "Bound: None"
-    Just expr -> putStrLn ("Bound: " ++ (printExpr expr))
+    Nothing   -> liftIO $ putStrLn "Bound: None"
+    Just expr -> liftIO $ putStrLn ("Bound: " ++ (printExpr expr))
   case step of
-    Nothing   -> putStrLn "Step: None"
-    Just expr -> putStrLn ("Step: " ++ (printExpr expr))
-  putStrLn ""
+    Nothing   -> liftIO $ putStrLn "Step: None"
+    Just expr -> liftIO $ putStrLn ("Step: " ++ (printExpr expr))
+  liftIO $ putStrLn ""
   printStmt stmt
-  putStrLn "End For"
+  liftIO $ putStrLn "End For"
   printSt st
 printStmt _ = error "Statement Case Not Implemented"
 
-printCBIs :: [CCompoundBlockItem AbsState] -> IO ()
+printCBIs :: [CCompoundBlockItem AbsState] -> Abstract ()
 printCBIs [] = return ()
 printCBIs ((CBlockStmt stmt):cbis) = do
   printStmt stmt
-  putStrLn ""
+  liftIO $ putStrLn ""
   printCBIs cbis
 printCBIs ((CBlockDecl decl):cbis) = do
   printDecl decl
-  putStrLn ""
+  liftIO $ putStrLn ""
   printCBIs cbis
 printCBIs _ = error "Nested Function not Implemented"
 
