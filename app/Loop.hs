@@ -195,6 +195,39 @@ forwardExprCheck initSt@(Just is) (CUnary uop (CVar (Ident v _ _) _) _)
       CPostDecOp -> (Just (varStateJoin is (v, Just (False, -1))), Nothing)
       _          -> (initSt, Nothing)
   | otherwise = (initSt, Nothing)
+forwardExprCheck initSt (CBinary bop expr1 expr2 _)
+  | (lSt == Nothing) || (rSt == Nothing)   = (Nothing, Nothing)
+  -- Let's hope that there are no nested assignment
+  | (lSt /= initSt) || (rSt /= initSt)     = (Nothing, Nothing)
+  | (lInt == Nothing) || (rInt == Nothing) = (initSt, Nothing)
+  | otherwise =
+    let (Just l) = lInt
+        (Just r) = rInt
+    in case bop of
+         CMulOp -> (initSt, Just (l * r))
+         CDivOp -> (initSt, Just (l `div` r))
+         CRmdOp -> (initSt, Just (l `mod` r))
+         CAddOp -> (initSt, Just (l + r))
+         CSubOp -> (initSt, Just (l - r))
+         _      -> (initSt, Nothing)
+  where (lSt, lInt) = forwardExprCheck initSt expr1
+        (rSt, rInt) = forwardExprCheck initSt expr2
+forwardExprCheck initSt@(Just is) (CAssign aop (CVar (Ident v _ _) _) expr _)
+  | nSt == Nothing           = (Nothing, Nothing)
+  | not (varAccessible v is) = (nSt, Nothing)
+  | nInt == Nothing          = 
+    let (Just n) = nSt
+    in (Just (varStateJoin n (v, Nothing)), Nothing)
+  | otherwise =
+    let (Just n) = nSt
+        (Just i) = nInt
+        genSt    = \a -> (Just (varStateJoin n a), Nothing)
+    in case aop of
+         CAssignOp -> genSt (v, Just (True, i))
+         CAddAssOp -> genSt (v, Just (False, i))
+         CSubAssOp -> genSt (v, Just (False, -i))
+         _         -> genSt (v, Nothing)
+  where (nSt, nInt) = forwardExprCheck initSt expr
 forwardExprCheck _ _ = error "expression case not implemented in loop"
 
 getLoopCond :: CExpression a -> Abstract (String, CBinaryOp, Integer)

@@ -31,7 +31,7 @@ printTU (CTranslUnit (ed:eds) a@(State b _)) = do
 
 printED :: CExternalDeclaration AbsState -> Abstract ()
 printED (CDeclExt cdecl) = do
-  printDecl cdecl
+  printDecl cdecl True
   liftIO $ putStrLn ""
 printED (CFDefExt (CFunDef _ (CDeclr (Just (Ident name _ _)) derived _ _ _) _ cstmt st)) = do
   liftIO $ putStrLn ("Function " ++ name ++ ":")
@@ -52,10 +52,12 @@ printArgs (CDecl _ vars _) = " " ++ (unwords (map (\(Just (CDeclr (Just (Ident v
 
 -- Function and Statement Level
 
-printDecl :: CDeclaration AbsState -> Abstract ()
-printDecl (CDecl _ vars st) = do
+printDecl :: CDeclaration AbsState -> Bool -> Abstract ()
+printDecl (CDecl _ vars st) p = do
   liftIO $ putStrLn ("Decl: " ++ (init (unwords (map printDeclHelper vars))))
-  printSt st
+  case p of
+    True -> printSt st
+    False -> return ()
 
 printDeclHelper :: (Maybe (CDeclarator AbsState), Maybe (CInitializer AbsState), Maybe (CExpression AbsState)) -> String
 printDeclHelper (Just (CDeclr (Just (Ident varName _ _)) _ _ _ _), Nothing, Nothing) = varName ++ ","
@@ -102,7 +104,7 @@ printStmt (CFor init bound step stmt st) = do
   case init of
     Left Nothing           -> liftIO $ putStrLn "Init: None"
     Left (Just expr)       -> liftIO $ putStrLn ("Init: " ++ (printExpr expr))
-    Right decl             -> printDecl decl
+    Right decl             -> printDecl decl False
   case bound of
     Nothing   -> liftIO $ putStrLn "Bound: None"
     Just expr -> liftIO $ putStrLn ("Bound: " ++ (printExpr expr))
@@ -122,7 +124,7 @@ printCBIs ((CBlockStmt stmt):cbis) = do
   liftIO $ putStrLn ""
   printCBIs cbis
 printCBIs ((CBlockDecl decl):cbis) = do
-  printDecl decl
+  printDecl decl True
   liftIO $ putStrLn ""
   printCBIs cbis
 printCBIs _ = error "Nested Function not Implemented"
