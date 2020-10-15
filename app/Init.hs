@@ -41,3 +41,16 @@ astHelper symT = do
   initAbstractState Intervals symT []
   abs <- abstractBottom
   return abs
+
+-- Find the actual name of a variable
+-- Assume that the variable must exist
+-- We only need to find if it is local or global
+findScope :: String -> String -> Abstract String
+findScope varName funcName
+  | funcName == "" = return varName
+  | otherwise = do
+    let localName = funcName ++ "@" ++ varName
+    l <- findVar localName
+    case l of
+      True  -> return localName
+      False -> return varName

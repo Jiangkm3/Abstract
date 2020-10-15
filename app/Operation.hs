@@ -6,6 +6,7 @@ import AbstractMonad
 import Texpr1
 import Tcons1
 import Types
+import Loop
 import Apron.Scalar
 import Apron.Lincons1
 import Language.C.Syntax.AST

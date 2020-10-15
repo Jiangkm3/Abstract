@@ -1,7 +1,7 @@
 int main() {
 	int a = 10;
-	do {
-		a--;
-	} while (a > 5);
+	for (int i = 0; i < 5; i--) {
+		a++;
+	}
 	return 1;
 }

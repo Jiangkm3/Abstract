@@ -85,6 +85,7 @@ executable apron-bindings-exe
       Paths_apron_bindings
       Eval
       Init
+      Loop
       Operation
       Parser
       Printer

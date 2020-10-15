@@ -14,6 +14,7 @@ import Operation
 import Types
 import Texpr1
 import Tcons1
+import Loop
 import Abstract1
 import AbstractMonad
 import Apron.Var
@@ -59,19 +60,6 @@ evalExtDecl abs _            = error "CAsmExt not Implemented"
 -----
 
 {- Functions -}
--- Find the actual name of a variable
--- Assume that the variable must exist
--- We only need to find if it is local or global
-findScope :: String -> String -> Abstract String
-findScope varName funcName
-  | funcName == "" = return varName
-  | otherwise = do
-    let localName = funcName ++ "@" ++ varName
-    l <- findVar localName
-    case l of
-      True  -> return localName
-      False -> return varName
-
 -- ignore arguments for now
 evalFunc :: Abstract1 -> CFunctionDef AbsState -> Abstract (Abstract1, CFunctionDef AbsState)
 evalFunc abs (CFunDef a b@(CDeclr (Just (Ident f _ _)) _ _ _ _) c stmt st) = do
@@ -136,30 +124,51 @@ evalCBIs abs f (cbi:cbis) = do
   (finalAbs, fCbis) <- evalCBIs nextAbs f cbis
   return (finalAbs, [nCbi] ++ fCbis)
 
-evalLoop :: Abstract1 -> String -> CStatement AbsState -> Abstract (Abstract1, CStatement AbsState)
+-- The integer is the iteration bound
+-- i.e. how many more iterations until we do the widening
+evalLoop :: Abstract1 -> String -> CStatement AbsState -> Integer -> Abstract (Abstract1, CStatement AbsState)
 
 -- While Loop
-evalLoop lastAbs f whileStmt@(CWhile cond stmt False st) = do
+evalLoop lastAbs f whileStmt@(CWhile cond stmt dw st) n = do
   itAbs          <- evalCons lastAbs f cond False
   (ntAbs, nStmt) <- evalStmt itAbs f stmt
-  nAbs           <- abstractWiden lastAbs ntAbs
+  nAbs           <- case (n < 0) of
+                      True  -> abstractWiden lastAbs ntAbs
+                      False -> abstractJoin lastAbs ntAbs
   leqEval        <- abstractIsLeq nAbs lastAbs
   finalAbs       <- evalCons lastAbs f cond True
   let nSt = setAbs (return finalAbs) st
   case leqEval of
-    True  -> return (finalAbs, CWhile cond nStmt False nSt)
-    False -> evalLoop nAbs f whileStmt
+    True  -> return (finalAbs, CWhile cond nStmt dw nSt)
+    False -> evalLoop nAbs f whileStmt (n - 1)
 
--- Do-While Loop
--- Evaluate the statement once and then do the while loop
-evalLoop a f whileStmt@(CWhile cond stmt True st) = do
-  (iAbs, iStmt) <- evalStmt a f stmt
-  let iSt = setAbs (return iAbs) st
-  (nAbs, (CWhile _ nStmt _ nSt)) <- evalLoop iAbs f (CWhile cond iStmt False iSt)
-  return (nAbs, CWhile cond nStmt True nSt)
+-- For Loop
+-- Convert: for (init; bound; step) do content
+-- to:      init; while(bound) do (content; step)
+-- Init is dealt in evalStmt
+evalLoop lastAbs f forStmt@(CFor init bound step stmt st) n = do
+  itAbs <- case bound of
+    Nothing   -> return lastAbs
+    Just cond -> evalCons lastAbs f cond False
+  (ltAbs, nStmt) <- evalStmt itAbs f stmt
+  dummyTexpr <- texprMakeConstant $ ScalarVal $ IntValue 0
+  (_, pair) <- case step of
+    Nothing   -> return (dummyTexpr, [])
+    Just expr -> evalExpr ltAbs f expr
+  ntAbs    <- foldl absAssgHelper (return ltAbs) pair
+  nAbs     <- case (n <= 0) of
+                True  -> abstractWiden lastAbs ntAbs
+                False -> abstractJoin lastAbs ntAbs
+  leqEval  <- abstractIsLeq nAbs lastAbs
+  finalAbs <- case bound of
+    Nothing   -> return lastAbs
+    Just cond -> evalCons lastAbs f cond True
+  let nSt = setAbs (return finalAbs) st
+  case leqEval of
+    True  -> return (finalAbs, CFor init bound step nStmt nSt)
+    False -> evalLoop nAbs f forStmt (n - 1)
 
--- Other Loop
-evalLoop _ _ _ = error "Loop Statement not implemented"
+evalLoop _ _ _ _ = error "Loop Statement not implemented"
 
 evalStmt :: Abstract1 -> String -> CStatement AbsState -> Abstract (Abstract1, CStatement AbsState)
 
@@ -175,6 +184,7 @@ evalStmt a f (CExpr (Just expr) st) = do
   return (nAbs, CExpr (Just expr) nSt)
 
 -- Return Statements
+-- Assume for now that nothing will be behind the return statement
 evalStmt a _ (CReturn Nothing st) = do
   let nSt = setAbs (return a) st
   return (a, CReturn Nothing nSt)
@@ -209,11 +219,49 @@ evalStmt a f (CIf cons tstmt (Just fstmt) st) = do
   return (nAbs, CIf cons ntStmt (Just nfStmt) nSt)
 
 -- Loops
-evalStmt a f stmt@(CWhile _ _ _ _) = evalLoop a f stmt
-evalStmt a f stmt@(CFor _ _ _ _ _) = evalLoop a f stmt
+evalStmt abs f whileStmt@(CWhile cond stmt dw st) = do
+  (a, _) <- case dw of
+    True  -> evalStmt abs f stmt
+    False -> return (abs, stmt)
+  itNum <- evalIteration a f (Left Nothing) (Just cond) Nothing stmt
+  let nSt = setAbs (return a) st
+  case itNum of
+    0 -> liftIO $ putStrLn "Warning: The program might be non-terminating!\n"
+    _ -> return ()
+  case itNum of
+    -- We do not know the iteration number
+    -2 -> evalLoop a f whileStmt 0
+    -- The loop will not be executed
+    -1 -> return (a, CWhile cond stmt dw nSt)
+    n  -> evalLoop a f whileStmt n
+-- We want to deal with init in the for loop
+evalStmt abs f forStmt@(CFor init cond step stmt st) = do
+  a <- evalInit abs f init
+  itNum <- evalIteration a f init cond step stmt
+  let nSt = setAbs (return a) st
+  case itNum of
+    0 -> liftIO $ putStrLn "Warning: The program might be non-terminating!\n"
+    _ -> return ()
+  case itNum of
+    -- We do not know the iteration number
+    -2 -> evalLoop a f forStmt 0
+    -- The loop will not be executed
+    -1 -> return (a, CFor init cond step stmt nSt)
+    n  -> evalLoop a f forStmt n
 
 -- Others
 evalStmt a f stmt = error "Statement Case not implemented"
+
+-- Just a helper function for For Loop
+evalInit :: Abstract1 -> String -> (Either (Maybe (CExpression AbsState)) (CDeclaration AbsState)) -> Abstract Abstract1
+evalInit a f (Left Nothing) = return a
+evalInit a f (Left (Just expr)) = do
+  (_, pair) <- evalExpr a f expr
+  iAbs <- foldl absAssgHelper (return a) pair
+  return iAbs
+evalInit a f (Right decl) = do
+  (iAbs, _) <- evalDecl a f decl
+  return iAbs
 
 -----
 
@@ -318,7 +366,13 @@ evalCons a f (CBinary bop expr1 expr2 _) neg
     tconsArraySetIndex arr 0 ntcons
     nAbs <- abstractTconsArrayMeet lAbs arr
     return nAbs
-   
+  | isBOpLogic bop = do
+    lAbs <- evalCons a f expr1 False
+    rAbs <- evalCons a f expr2 False
+    case bop of
+      CLndOp -> abstractMeet lAbs rAbs
+      CLorOp -> abstractJoin lAbs rAbs
+
   | otherwise     = error "Int to Bool Conversion not supported"
 
 evalCons a f _ _ = error "Int to Bool Conversion not supported"
@@ -343,3 +397,28 @@ isBOpLogic bop =
     CLndOp -> True
     CLorOp -> True
     _      -> False
+
+{- Extra Modules -}
+
+-- We deal with delayed narrowing in this function.
+-- The goal is to estimate the number of iterations a loop will execute
+-- The output number n indicates that the number of iteration we would join the
+-- states before doing the widening
+-- n == 0  indicates that the loop is nonterm
+-- n == -1 indicates that it will not be executed
+-- n == -2 indicates that we cannot bound the iteration number
+evalIteration :: Abstract1 -> String -> (Either (Maybe (CExpression AbsState)) (CDeclaration AbsState)) -> Maybe (CExpression AbsState) -> Maybe (CExpression AbsState) -> CStatement AbsState -> Abstract Integer
+-- If there's no condition, then the loop is non-term
+evalIteration _ _ _ Nothing _ _ = return 0
+-- If the condition is a const, then the loop either is non-term or never executed
+evalIteration _ _ _ (Just (CConst (CIntConst cint _))) _ _ =
+  case (getCInteger cint) of
+    0 ->  return (-1)
+    _ ->  return 0
+evalIteration pre f init (Just cond) step stmt = do
+  a <- evalCons pre f cond False
+  b <- abstractIsBottom a
+  case b of
+    -- The loop will not be executed if the condition is false
+    True -> return (-1)
+    False -> getIterationNum pre f init cond step stmt
