@@ -1,201 +1,196 @@
--- A module that deals with narrowing of a loop analysis.
--- Two narrowing methods are considered:
--- Delayed narrowing: bound the number of iteration of the loop
--- Threshold narrowing: give a precise terminate condition of the loop
--- Assumption: the loop will be executed at least once
--- We don't have to deal with scope in this module, as everything is in the
--- same function
+-- A module that deals with threshold narrowing
 
 module Loop where
 
 import Init
+import Types
+import Operation
 import Abstract1
 import AbstractMonad
 import Texpr1
 import Tcons1
+import GHC.Int
+import Apron.Scalar
 import Language.C.Syntax.AST
 import Language.C.Data.Ident
 import Language.C.Syntax.Constants
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Control.Monad.State.Strict (liftIO)
 
-type VarState = (String, Maybe (Bool, Integer))
+-- We want to have a Texpr for every variable
+type LastVar = Map String (Maybe Texpr1)
 
--- Obtain the relative constraint from the constraint and initial value
--- i.e. init is a = 7; constraint is a < 5, then actual constraint is a < -2
--- Condition list and VarState by definition must match
-initConsState :: [(String, CBinaryOp, Integer)] -> [VarState] -> [(String, CBinaryOp, Maybe Integer)]
-initConsState [] [] = []
-initConsState ((v, bop, i1):cs) ((_, Just(True, i2)):vs) =
-  [(v, bop, Just (i1 - i2))] ++ initConsState cs vs
-initConsState ((var, bop, _):cs) (v:vs) = 
-  [(var, bop, Nothing)] ++ initConsState cs vs
+-- A simple AST to record the entire constraint on the last iteration
+data LoopAST = LTcons Tcons1
+             | LNull
+             | LAnd LoopAST LoopAST
+             | LOr LoopAST LoopAST
+             | LNot LoopAST
 
--- Convert the varState we obtain from initialization to the one we need
--- for analysis
-initVarState :: VarState -> VarState
-initVarState (var, Just (True, val))  = (var, Just (False, 0))
-initVarState (var, Just (False, val)) = (var, Just (False, 0))
+-- Notice that a variable in the constraint may never appear in the loop
+-- body, so that it is never in LastVar
+lastCond :: Abstract1 -> String -> LastVar -> CExpression a -> Abstract LoopAST
+lastCond a f lv (CBinary bop expr1 expr2 _)
+  | isBOpLogic bop = do
+    lAst <- lastCond a f lv expr1
+    rAst <- lastCond a f lv expr2
+    case bop of
+      CLndOp -> return (LAnd lAst rAst)
+      CLorOp -> return (LOr lAst rAst)
+  | isBOpCons bop = do
+    lAst <- lastCondHelper a f lv expr1
+    rAst <- lastCondHelper a f lv expr2
+    lastCondBOpHelper lAst rAst bop
+  | otherwise = error "Invalid Comparison"
 
--- Calculate the iteration required for each variable to satisfy its condition
--- 0  == the variable would never reach the condition
--- -2 == the number of iteration is undetermined
--- Condition list and VarState by definition must match
-calVarIteration :: [(String, CBinaryOp, Maybe Integer)] -> [VarState] -> [(String, Integer)]
-calVarIteration [] [] = []
-calVarIteration ((v, bop, cons):cs) ((_, Nothing):vs) =
-  [(v, -2)] ++ calVarIteration cs vs
-calVarIteration ((v, bop, cons):cs) ((_, (Just (ass, change))):vs)
-  | ass         = [(v, 0)] ++ calVarIteration cs vs
-  | change == 0 = [(v, 0)] ++ calVarIteration cs vs
-  -- If we do not know the initial value, we can still determine if the loop
-  -- is non-term
-  | cons == Nothing =
-    case (bop, change < 0) of
-      (CLeOp, True)   -> [(v, 0)] ++ calVarIteration cs vs
-      (CGrOp, False)  -> [(v, 0)] ++ calVarIteration cs vs
-      (CLeqOp, True)  -> [(v, 0)] ++ calVarIteration cs vs
-      (CGeqOp, False) -> [(v, 0)] ++ calVarIteration cs vs
-      (_, _)          -> [(v, -2)] ++ calVarIteration cs vs
- 
-  | otherwise =
-    case (bop, change < 0) of
-      (CLeOp, True)   -> [(v, 0)] ++ calVarIteration cs vs
-      (CLeOp, False)  -> [(v, iNum)] ++ calVarIteration cs vs
-      (CGrOp, True)   -> [(v, iNum)] ++ calVarIteration cs vs
-      (CGrOp, False)  -> [(v, 0)] ++ calVarIteration cs vs
-      (CLeqOp, True)  -> [(v, 0)] ++ calVarIteration cs vs
-      (CLeqOp, False) -> [(v, iNum)] ++ calVarIteration cs vs
-      (CGeqOp, True)  -> [(v, iNum)] ++ calVarIteration cs vs
-      (CGeqOp, False) -> [(v, 0)] ++ calVarIteration cs vs
-      (CNeqOp, _)     -> [(v, iNum)] ++ calVarIteration cs vs
-      (_, _)          -> error "Loop Condition not supported"
-  where Just n = cons  
-        iNum = abs (calVarIterationHelper n change)
+lastCondBOpHelper :: Maybe Texpr1 -> Maybe Texpr1 -> CBinaryOp -> Abstract LoopAST
+lastCondBOpHelper Nothing _ _ = return LNull
+lastCondBOpHelper _ Nothing _ = return LNull
+lastCondBOpHelper (Just l) (Just r) bop = do
+  nl <- case bop of
+          CLeOp  -> texprMakeBinOp SUB_OP r l ROUND_INT ROUND_DOWN
+          CLeqOp -> texprMakeBinOp SUB_OP r l ROUND_INT ROUND_DOWN
+          _      -> texprMakeBinOp SUB_OP l r ROUND_INT ROUND_DOWN
+  nr <- liftIO $ constrScalar 0
+  tcons <- tconsMake (evalConsBOp bop) nl nr
+  return (LTcons tcons)
 
--- Helper function to get the correct iteration number
-calVarIterationHelper :: Integer -> Integer -> Integer
-calVarIterationHelper a b =
-  case (c < 0) of
-    True  -> floor c
-    False -> ceiling c
-  where c = (fromIntegral a) / (fromIntegral b)
+lastCondHelper :: Abstract1 -> String -> LastVar -> CExpression a -> Abstract (Maybe Texpr1)
+lastCondHelper a f lv (CVar (Ident v _ _) _) = do
+  var   <- findScope v f
+  let texpr = Map.lookup var lv
+  case texpr of
+    Nothing -> (texprMakeLeafVar var) >>= (\a -> return (Just a))
+    Just a  -> return a
+lastCondHelper a f lv (CConst (CIntConst n _)) = do
+  texpr <- texprMakeConstant $ ScalarVal $ IntValue $ (fromInteger (getCInteger n) :: Int32)
+  return (Just texpr)
+lastCondHelper a f lv _ = error "Statement not supported in loop"
 
--- Delayed narrowing:
--- The goal is to bound the number of iterations
--- The output n indicates that in the first n iterations, we would join the
--- result with the previous iteration, only after that we do widening
--- n == 0  indicates that the loop is non-term
--- n == -2 indicates that we cannot bound the iteration number
---
--- There is no real way to bound a while loop, since it is difficult to get
--- the initial state. We can however know if a while loop is non-term.
-getIterationNum :: Abstract1 -> String -> (Either (Maybe (CExpression a)) (CDeclaration a)) -> CExpression a -> Maybe (CExpression a) -> CStatement a -> Abstract Integer
--- In a simple but widely used case, we deal with examples that has a condition
--- (ax1 + bx2 < c) and the vars (x1, x2) is changed linearly
-getIterationNum a f init cond step stmt = do
-  c1@(v, bop, i) <- getLoopCond cond
-  let initSt = Just [(v, Just (False, 0))]
-  let (Just inSt) = case init of
-                      Left Nothing     -> initSt
-                      Left (Just expr) -> fst (forwardExprCheck initSt expr)
-                      Right decl       -> forwardDeclCheck initSt decl
-  let consLst = initConsState [c1] inSt
-  let iSt = map initVarState inSt
-  let nSt = forwardCheck (Just iSt) stmt
-  let fSt = case step of
-              Nothing     -> nSt
-              Just (expr) -> fst (forwardExprCheck nSt expr)
-  let itLst = case fSt of
-                (Just n) -> calVarIteration consLst n
-                _        -> [("", -2)]
-  return (snd (head itLst))
+-- The goal is to obtain an AST of texpr1
+-- In this case, we don't need to worry about init
+getLoopCons :: Abstract1 -> String -> CExpression a -> Maybe (CExpression a) -> CStatement a -> Abstract LoopAST
+getLoopCons a f cond step stmt = do
+  -- Initialization: every variable is mapped to itself
+  -- We delay this step until a variable is actually mentioned
+  let varSt = Just (Map.empty)
+  -- Backward-analyze the loop
+  (initVS, _) <- case step of
+                 Nothing     -> return (varSt, Nothing)
+                 Just (expr) -> backwardExprCheck a f varSt expr
+  finalVS <- backwardCheck a f initVS stmt
+  case finalVS of
+    Nothing -> return LNull
+    Just vs -> lastCond a f vs cond
 
-varStateJoin :: [VarState] -> VarState -> [VarState]
-varStateJoin [] _ = []
-varStateJoin ((_, Nothing):sts) st = varStateJoin sts st
-varStateJoin ((cv, Just (cass, ci)):sts) st@(v, Just (ass, i))
-  | (cv == v) && (ass == True) = [(cv, Just (ass, i))] ++ sts
-  | cv == v                    = [(cv, Just (cass, ci + i))] ++ sts
-  | otherwise = varStateJoin sts st
-
-varAccessible :: String -> [VarState] -> Bool
-varAccessible _ [] = False
-varAccessible v ((cv, Nothing):sts)
-  | v == cv   = False
-  | otherwise = varAccessible v sts
-varAccessible v ((cv, Just (_, _)):sts)
-  | v == cv   = True
-  | otherwise = varAccessible v sts
-
--- Forward-analyze a program to check the change of certain variables
--- We only aim for deterministic change
--- The state (var, bool, int) checks the change of a var in an iteration
--- The Boolean is True if the variable is assigned to a constant
--- ("a", False, +3) indicates an iteration increases a by 3
--- ("a", True, -7) indicates that a is -7 after every iteration,
--- since it would always be assigned somewhere in the loop
-forwardCheck :: Maybe [VarState] -> CStatement a -> Maybe [VarState]
-forwardCheck Nothing _ = Nothing
-forwardCheck initSt (CExpr Nothing _) = initSt
-forwardCheck initSt (CExpr (Just expr) _) = fst (forwardExprCheck initSt expr)
+backwardCheck :: Abstract1 -> String -> Maybe LastVar -> CStatement a -> Abstract (Maybe LastVar)
+backwardCheck _ _ Nothing _ = return Nothing
+backwardCheck _ _ initSt (CExpr Nothing _) = return initSt
+backwardCheck a f initSt (CExpr (Just expr) _) = do
+  (nSt, _) <- backwardExprCheck a f initSt expr
+  return nSt
 -- For If Statement, as long as the variable is changed the same way for
--- both cases, we are good
-forwardCheck initSt (CIf cons tstmt Nothing _)
-  | initSt == tSt = tSt
-  | otherwise     = Nothing
-  where tSt = forwardCheck initSt tstmt
-forwardCheck initSt (CIf cons tstmt (Just fstmt) _)
-  | tSt == fSt = tSt
-  | otherwise  = Nothing
-  where tSt = forwardCheck initSt tstmt
-        fSt = forwardCheck initSt fstmt
--- We cannot determine if a loop would terminate, so any nested loop would
--- make analysus impossible
-forwardCheck _ (CFor _ _ _ _ _) = Nothing
-forwardCheck _ (CWhile _ _ _ _) = Nothing
-forwardCheck initSt (CCompound _ cbis _) = foldl forwardCBICheck initSt cbis
+-- both cases, we are goodd
+backwardCheck a f initSt (CIf _ _ _ _) = return Nothing
+{-
+backwardCheck a f initSt (CIf cons tstmt Nothing _) = do
+  tSt <- backwardCheck a f initSt tstmt
+  case (initSt == tSt) of
+    True  -> return tSt
+    False -> return Nothing
+backwardCheck a f initSt (CIf cons tstmt (Just fstmt) _) = do
+  tSt <- backwardCheck a f initSt tstmt
+  fSt <- backwardCheck a f initSt fstmt
+  case (tSt == fSt) of
+    True  -> return tSt
+    False -> return Nothing
+-}
+-- Ignore nested loops for now
+backwardCheck _ _ _ (CFor _ _ _ _ _) = return Nothing
+backwardCheck _ _ _ (CWhile _ _ _ _) = return Nothing
+backwardCheck a f initSt (CCompound _ cbis _) = foldr (backwardCBICheck a f) (return initSt) cbis
+backwardCheck _ _ _ _ = error "Unsupported statements inside a loop"
 
-forwardCheck _ _ = error "Unsupported statements inside a loop"
+backwardCBICheck :: Abstract1 -> String -> CCompoundBlockItem a -> Abstract (Maybe LastVar) -> Abstract (Maybe LastVar)
+backwardCBICheck a f cbi lv = do
+  l <- lv
+  case (l, cbi) of
+    (Nothing, _) -> return Nothing
+    (iSt, CBlockStmt stmt) -> backwardCheck a f iSt stmt
+    (iSt, CBlockDecl decl) -> backwardDeclCheck a f iSt decl
 
-forwardCBICheck :: Maybe [VarState] -> CCompoundBlockItem a -> Maybe [VarState]
-forwardCBICheck Nothing _ = Nothing
-forwardCBICheck initSt (CBlockStmt stmt) = forwardCheck initSt stmt
-forwardCBICheck initSt (CBlockDecl decl) = forwardDeclCheck initSt decl
+backwardDeclCheck :: Abstract1 -> String -> Maybe LastVar -> CDeclaration a -> Abstract (Maybe LastVar)
+backwardDeclCheck _ _ Nothing _ = return Nothing
+backwardDeclCheck a f initSt (CDecl _ d _) = foldr (backwardDeclHelper a f) (return initSt) d
 
-forwardDeclCheck :: Maybe [VarState] -> CDeclaration a -> Maybe [VarState]
-forwardDeclCheck Nothing _ = Nothing
-forwardDeclCheck initSt (CDecl _ d _) = foldl forwardDeclHelper initSt d
-
-forwardDeclHelper :: Maybe [VarState] -> (Maybe (CDeclarator a), Maybe (CInitializer a), Maybe (CExpression a)) -> Maybe [VarState]
-forwardDeclHelper Nothing _ = Nothing
-forwardDeclHelper initSt (_, Nothing, Nothing) = initSt
-forwardDeclHelper initSt@(Just is) (Just (CDeclr (Just (Ident v _ _)) _ _ _ _), (Just (CInitExpr expr _)), Nothing)
-  | varAccessible v is =
-    case (nSt, nVal) of
-      (Nothing, _) -> Nothing
-      (Just n, Nothing) -> Just (varStateJoin n (v, Nothing))
-      (Just n, Just val) -> Just (varStateJoin n (v, Just (True, val)))
-  | otherwise = nSt
-    where (nSt, nVal) = forwardExprCheck initSt expr
-forwardDeclHelper _ _ = error "Declaration case not supported"
+backwardDeclHelper :: Abstract1 -> String -> (Maybe (CDeclarator a), Maybe (CInitializer a), Maybe (CExpression a)) -> Abstract (Maybe LastVar) -> Abstract (Maybe LastVar)
+-- We might be able to find out what the value of the variable is before it
+-- is assigned, but right now let's ignore it
+backwardDeclHelper a f (Just (CDeclr (Just (Ident v _ _)) _ _ _ _), Nothing, Nothing) initSt = do
+  var <- findScope v f
+  Just iSt <- initSt
+  let nSt = Map.insert var Nothing iSt
+  return (Just nSt)
+backwardDeclHelper a f (Just (CDeclr (Just (Ident v _ _)) _ _ _ _), (Just (CInitExpr expr _)), Nothing) initSt = do
+  var <- findScope v f
+  Just iSt <- initSt
+  (nSt, nVal) <- backwardExprCheck a f (Just iSt) expr
+  case (nSt, nVal) of
+    (Nothing, _) -> return Nothing
+    (Just n, _)  -> return (Just (Map.insert var Nothing n))
+backwardDeclHelper _ _ _ _ = error "Declaration case not supported"
 
 -- We also need to keep track of the value of the current expression
 -- Nothing if the current expression does not give us an integer value
-forwardExprCheck :: Maybe [VarState] -> CExpression a -> (Maybe [VarState], Maybe Integer)
-forwardExprCheck Nothing _ = (Nothing, Nothing)
-forwardExprCheck initSt (CVar _ _) = (initSt, Nothing)
-forwardExprCheck initSt (CConst (CIntConst cint _)) =
-  (initSt, Just (getCInteger cint))
+backwardExprCheck :: Abstract1 -> String -> Maybe LastVar -> CExpression a -> Abstract (Maybe LastVar, Maybe Texpr1)
+backwardExprCheck _ _ Nothing _ = return (Nothing, Nothing)
+backwardExprCheck a f (Just iSt) (CVar (Ident v _ _) _) = do
+  var <- findScope v f
+  let varExpr = Map.lookup var iSt
+  vtexpr <- texprMakeLeafVar var
+  let nSt = case varExpr of
+              Nothing -> Just (Map.insert var (Just vtexpr) iSt)
+              _       -> Just iSt
+  case varExpr of
+    Nothing -> return (nSt, Just vtexpr)
+    Just ve -> return (nSt, ve)
+backwardExprCheck _ _ initSt (CConst (CIntConst cint _)) = do
+  i <- texprMakeConstant $ ScalarVal $ IntValue $ (fromInteger (getCInteger cint) :: Int32)
+  return (initSt, Just i)
 -- We need to deal with ++ or --
-forwardExprCheck initSt@(Just is) (CUnary uop (CVar (Ident v _ _) _) _)
-  | varAccessible v is =
-    case uop of
-      CPreIncOp  -> (Just (varStateJoin is (v, Just (False, 1))), Nothing)
-      CPostIncOp -> (Just (varStateJoin is (v, Just (False, 1))), Nothing)
-      CPreDecOp  -> (Just (varStateJoin is (v, Just (False, -1))), Nothing)
-      CPostDecOp -> (Just (varStateJoin is (v, Just (False, -1))), Nothing)
-      _          -> (initSt, Nothing)
-  | otherwise = (initSt, Nothing)
-forwardExprCheck initSt (CBinary bop expr1 expr2 _)
+backwardExprCheck a f initSt@(Just iSt) (CUnary uop (CVar (Ident v _ _) _) _) = do
+  var <- findScope v f
+  let varExpr = Map.lookup var iSt
+  nExpr <- case varExpr of
+             Nothing -> (texprMakeLeafVar var) >>= (\a -> return (Just a))
+             Just Nothing -> return Nothing
+             Just (Just ve) -> return (Just ve)
+  l <- texprMakeConstant $ ScalarVal $ IntValue (-1)
+  let tmbo op te = (texprMakeBinOp op te l ROUND_INT ROUND_DOWN) >>= (\a -> return (Just a))
+  fExpr <- case (uop, nExpr) of
+             (_, Nothing) -> return Nothing
+             (CPreIncOp, Just n)  -> tmbo ADD_OP n 
+             (CPostIncOp, Just n) -> tmbo ADD_OP n
+             (CPreDecOp, Just n)  -> tmbo SUB_OP n
+             (CPostDecOp, Just n) -> tmbo SUB_OP n
+             (_, Just n)          -> return (Just n)
+  let nSt = Just (Map.insert var fExpr iSt)
+  minSt <- case nExpr of
+             Nothing -> return Nothing
+             Just ve -> texprMakeBinOp MUL_OP ve l ROUND_INT ROUND_DOWN >>= (\a -> return (Just a))
+  case uop of
+    CPreIncOp  -> return (nSt, nExpr)
+    CPostIncOp -> return (nSt, fExpr)
+    CPreDecOp  -> return (nSt, nExpr)
+    CPostDecOp -> return (nSt, fExpr)
+    CPlusOp    -> return (initSt, nExpr)
+    CMinOp     -> return (initSt, minSt)
+    _          -> return (initSt, Nothing)
+{-
+backwardExprCheck a f initSt (CBinary bop expr1 expr2 _)
+  (lSt, ltexpr) <- backwardExprCheck a f initSt expr1
+  (rSt, rtexpr) <- backwardExprCheck a f initSt expr2
   | (lSt == Nothing) || (rSt == Nothing)   = (Nothing, Nothing)
   -- Let's hope that there are no nested assignment
   | (lSt /= initSt) || (rSt /= initSt)     = (Nothing, Nothing)
@@ -210,27 +205,41 @@ forwardExprCheck initSt (CBinary bop expr1 expr2 _)
          CAddOp -> (initSt, Just (l + r))
          CSubOp -> (initSt, Just (l - r))
          _      -> (initSt, Nothing)
-  where (lSt, lInt) = forwardExprCheck initSt expr1
-        (rSt, rInt) = forwardExprCheck initSt expr2
-forwardExprCheck initSt@(Just is) (CAssign aop (CVar (Ident v _ _) _) expr _)
-  | nSt == Nothing           = (Nothing, Nothing)
-  | not (varAccessible v is) = (nSt, Nothing)
-  | nInt == Nothing          = 
-    let (Just n) = nSt
-    in (Just (varStateJoin n (v, Nothing)), Nothing)
-  | otherwise =
-    let (Just n) = nSt
-        (Just i) = nInt
-        genSt    = \a -> (Just (varStateJoin n a), Nothing)
-    in case aop of
-         CAssignOp -> genSt (v, Just (True, i))
-         CAddAssOp -> genSt (v, Just (False, i))
-         CSubAssOp -> genSt (v, Just (False, -i))
-         _         -> genSt (v, Nothing)
-  where (nSt, nInt) = forwardExprCheck initSt expr
-forwardExprCheck _ _ = error "expression case not implemented in loop"
+-}
+backwardExprCheck a f initSt@(Just iSt) (CAssign aop (CVar (Ident v _ _) _) expr _) = do
+  (nSt, nInt) <- backwardExprCheck a f initSt expr
+  var <- findScope v f
+  let varExpr = Map.lookup var iSt
+  backwardAOpHelper nSt nInt var aop varExpr
+backwardExprCheck _ _ _ _ = error "expression case not implemented in loop"
 
-getLoopCond :: CExpression a -> Abstract (String, CBinaryOp, Integer)
-getLoopCond (CBinary bop (CVar (Ident v _ _) _) (CConst (CIntConst cint _)) _) = do
-  let i = getCInteger cint
-  return (v, bop, i)
+backwardAOpHelper :: Maybe LastVar -> Maybe Texpr1 -> String -> CAssignOp -> Maybe (Maybe Texpr1) -> Abstract (Maybe LastVar, Maybe Texpr1)
+-- There are so many different cases
+-- Case 1: the variable state becomes false
+backwardAOpHelper Nothing _ _ _ _ = return (Nothing, Nothing)
+-- Case 2: the evaluated value is undetermined
+backwardAOpHelper (Just iSt) Nothing var _ _ = do
+  let nSt = Just (Map.insert var Nothing iSt)
+  return (nSt, Nothing)
+-- Case 3: the variable is reassigned
+backwardAOpHelper (Just iSt) _ var CAssignOp _ = do
+  let nSt = Just (Map.insert var Nothing iSt)
+  return (nSt, Nothing)
+-- Case 4: the normal case
+backwardAOpHelper (Just iSt) (Just ntexpr) var aop texpr0 = do
+  -- If the variable is never in the LastVar before, create one and make the
+  -- AST same as the old one
+  texpr1 <- case texpr0 of
+              Nothing -> (texprMakeLeafVar var) >>= (\a -> return (Just a))
+              Just t0 -> return t0
+  let tmbo op t1 t2 = (texprMakeBinOp op t1 t2 ROUND_INT ROUND_DOWN) >>= (\a -> return (Just a))
+  texpr2 <- case (texpr1, aop) of
+              (Nothing, _) -> return Nothing
+              (Just t1, CAddAssOp) -> tmbo SUB_OP t1 ntexpr
+              (Just t1, CSubAssOp) -> tmbo ADD_OP t1 ntexpr
+              (Just t1, CMulAssOp) -> tmbo DIV_OP t1 ntexpr
+              -- For other assop like div or mod, we cannot obtain the inverse
+              (_, _)               -> return Nothing
+  let nSt = Just (Map.insert var texpr2 iSt)
+  -- Unlike the case of ++ / --, the resultant expression is always returned
+  return (nSt, texpr1)

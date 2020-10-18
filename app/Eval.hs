@@ -223,8 +223,13 @@ evalStmt abs f whileStmt@(CWhile cond stmt dw st) = do
   (a, _) <- case dw of
     True  -> evalStmt abs f stmt
     False -> return (abs, stmt)
+  lAST <- getLoopCons a f cond Nothing stmt
+  (nAbs, nWStmt@(CWhile _ nStmt _ nSt)) <- evalLoop a f whileStmt 0
+  fAbs <- evalLAST nAbs lAST
+  let fSt = setAbs (return fAbs) nSt
+  return (fAbs, (CWhile cond nStmt dw fSt))
+{-
   itNum <- evalIteration a f (Left Nothing) (Just cond) Nothing stmt
-  let nSt = setAbs (return a) st
   case itNum of
     0 -> liftIO $ putStrLn "Warning: The program might be non-terminating!\n"
     _ -> return ()
@@ -234,11 +239,17 @@ evalStmt abs f whileStmt@(CWhile cond stmt dw st) = do
     -- The loop will not be executed
     -1 -> return (a, CWhile cond stmt dw nSt)
     n  -> evalLoop a f whileStmt n
+-}
 -- We want to deal with init in the for loop
 evalStmt abs f forStmt@(CFor init cond step stmt st) = do
   a <- evalInit abs f init
+  lAST <- getLoopCons a f cond step stmt
+  (nAbs, nFStmt@(CFor _ _ _ nStmt nSt)) <- evalLoop a f forStmt 0
+  fAbs <- evalLAST nAbs lAST
+  let fSt = setAbs (return fAbs) nSt
+  return (fAbs, (CFor init cond step nStmt fSt))
+{-
   itNum <- evalIteration a f init cond step stmt
-  let nSt = setAbs (return a) st
   case itNum of
     0 -> liftIO $ putStrLn "Warning: The program might be non-terminating!\n"
     _ -> return ()
@@ -248,6 +259,7 @@ evalStmt abs f forStmt@(CFor init cond step stmt st) = do
     -- The loop will not be executed
     -1 -> return (a, CFor init cond step stmt nSt)
     n  -> evalLoop a f forStmt n
+-}
 
 -- Others
 evalStmt a f stmt = error "Statement Case not implemented"
@@ -366,40 +378,27 @@ evalCons a f (CBinary bop expr1 expr2 _) neg
     tconsArraySetIndex arr 0 ntcons
     nAbs <- abstractTconsArrayMeet lAbs arr
     return nAbs
-  | isBOpLogic bop = do
+  | (isBOpLogic bop) && (not neg) = do
     lAbs <- evalCons a f expr1 False
     rAbs <- evalCons a f expr2 False
     case bop of
       CLndOp -> abstractMeet lAbs rAbs
       CLorOp -> abstractJoin lAbs rAbs
-
+  | isBOpLogic bop = do
+    lAbs <- evalCons a f expr1 True
+    rAbs <- evalCons a f expr2 True
+    case bop of
+      CLndOp -> abstractJoin lAbs rAbs
+      CLorOp -> abstractMeet lAbs rAbs
   | otherwise     = error "Int to Bool Conversion not supported"
-
+evalCons a f (CUnary uop expr _) neg
+  | uop == CNegOp = evalCons a f expr (not neg)
+  | otherwise     = error "Int to Bool Conversion not supported"  
 evalCons a f _ _ = error "Int to Bool Conversion not supported"
 
--- Helper Function to determine if we are evaluating a tree expression
--- or a tree constraint
--- True if the operation is a constraint operation
-isBOpCons :: CBinaryOp -> Bool
-isBOpCons bop =
-  case bop of
-    CLeOp  -> True
-    CGrOp  -> True
-    CLeqOp -> True
-    CGeqOp -> True
-    CEqOp  -> True
-    CNeqOp -> True
-    _      -> False
-
-isBOpLogic :: CBinaryOp -> Bool
-isBOpLogic bop =
-  case bop of
-    CLndOp -> True
-    CLorOp -> True
-    _      -> False
 
 {- Extra Modules -}
-
+{-
 -- We deal with delayed narrowing in this function.
 -- The goal is to estimate the number of iterations a loop will execute
 -- The output number n indicates that the number of iteration we would join the
@@ -422,3 +421,22 @@ evalIteration pre f init (Just cond) step stmt = do
     -- The loop will not be executed if the condition is false
     True -> return (-1)
     False -> getIterationNum pre f init cond step stmt
+-}
+
+evalLAST :: Abstract1 -> LoopAST -> Abstract Abstract1
+evalLAST a LNull = return a
+evalLAST a (LTcons tcons) = do
+  arr <- tconsArrayMake 1
+  tconsArraySetIndex arr 0 tcons
+  nAbs <- abstractTconsArrayMeet a arr
+  return nAbs
+evalLAST a (LAnd ast1 ast2) = do
+  lAbs <- evalLAST a ast1
+  rAbs <- evalLAST a ast2
+  abstractMeet lAbs rAbs
+evalLAST a (LNot ast) = error "Not constraint not implemneted"
+evalLAST a (LOr ast1 ast2) = do
+  lAbs <- evalLAST a ast1
+  rAbs <- evalLAST a ast2
+  abstractJoin lAbs rAbs
+

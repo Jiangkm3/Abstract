@@ -6,7 +6,6 @@ import AbstractMonad
 import Texpr1
 import Tcons1
 import Types
-import Loop
 import Apron.Scalar
 import Apron.Lincons1
 import Language.C.Syntax.AST
@@ -151,3 +150,26 @@ evalIncDec uop l = do
   r <- texprMakeConstant $ ScalarVal $ IntValue $ 1
   n <- texprMakeBinOp (evalUOp uop) l r ROUND_INT ROUND_DOWN
   return n
+
+-- Helper Functions
+-- Helper Function to determine if we are evaluating a tree expression
+-- or a tree constraint
+-- True if the operation is a constraint operation
+isBOpCons :: CBinaryOp -> Bool
+isBOpCons bop =
+  case bop of
+    CLeOp  -> True
+    CGrOp  -> True
+    CLeqOp -> True
+    CGeqOp -> True
+    CEqOp  -> True
+    CNeqOp -> True
+    _      -> False
+
+isBOpLogic :: CBinaryOp -> Bool
+isBOpLogic bop =
+  case bop of
+    CLndOp -> True
+    CLorOp -> True
+    _      -> False
+
