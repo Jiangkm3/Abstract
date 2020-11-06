@@ -1,0 +1,3 @@
+[submodule "apron-bindings"]
+	path = apron-bindings
+	url = https://github.com/mlfbrown/apron-bindings
