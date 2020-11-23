@@ -117,12 +117,14 @@ evalCBI abs f (CBlockDecl decl) = do
   return (nAbs, CBlockDecl nDecl)
 evalCBI _ _ _ = error "CBI nested function type not implemented"
 
+-- Evaluating Compound Block Item List
 evalCBIs :: Abstract1 -> String -> [CCompoundBlockItem AbsState] -> Abstract (Abstract1, [CCompoundBlockItem AbsState])
 evalCBIs abs f [] = return (abs, [])
 evalCBIs abs f (cbi:cbis) = do
   (nextAbs, nCbi)   <- evalCBI abs f cbi
   (finalAbs, fCbis) <- evalCBIs nextAbs f cbis
   return (finalAbs, [nCbi] ++ fCbis)
+  
 
 -- The integer is the iteration bound
 -- i.e. how many more iterations until we do the widening
@@ -136,10 +138,9 @@ evalLoop lastAbs f whileStmt@(CWhile cond stmt dw st) n = do
                       True  -> abstractWiden lastAbs ntAbs
                       False -> abstractJoin lastAbs ntAbs
   leqEval        <- abstractIsLeq nAbs lastAbs
-  finalAbs       <- evalCons lastAbs f cond True
-  let nSt = setAbs (return finalAbs) st
+  let nSt = setAbs (return lastAbs) st
   case leqEval of
-    True  -> return (finalAbs, CWhile cond nStmt dw nSt)
+    True  -> return (lastAbs, CWhile cond nStmt dw nSt)
     False -> evalLoop nAbs f whileStmt (n - 1)
 
 -- For Loop
@@ -160,15 +161,30 @@ evalLoop lastAbs f forStmt@(CFor init bound step stmt st) n = do
                 True  -> abstractWiden lastAbs ntAbs
                 False -> abstractJoin lastAbs ntAbs
   leqEval  <- abstractIsLeq nAbs lastAbs
-  finalAbs <- case bound of
-    Nothing   -> return lastAbs
-    Just cond -> evalCons lastAbs f cond True
-  let nSt = setAbs (return finalAbs) st
+  let nSt = setAbs (return lastAbs) st
   case leqEval of
-    True  -> return (finalAbs, CFor init bound step nStmt nSt)
+    True  -> return (lastAbs, CFor init bound step nStmt nSt)
     False -> evalLoop nAbs f forStmt (n - 1)
 
 evalLoop _ _ _ _ = error "Loop Statement not implemented"
+
+-- Narrowing a loop
+-- The idea is that after computing a fixpoint of the loop, the result of
+-- executing one more iteration based on that fixpoint must still be sound.
+-- Furthermore, this result can only be less or equal to the previous one.
+-- Thus by iterating one more loop, we might be able to obtain a more precise
+-- abstraction.
+evalNarrow :: Abstract1 -> String -> CExpression AbsState -> CStatement AbsState -> Maybe (CExpression AbsState) -> Abstract Abstract1
+evalNarrow lastAbs f cond stmt step = do
+  iAbs      <- evalCons lastAbs f cond False
+  (lAbs, _) <- evalStmt iAbs f stmt
+  dummyTexpr <- texprMakeConstant $ ScalarVal $ IntValue 0
+  (_, pair)  <- case step of
+    Nothing   -> return (dummyTexpr, [])
+    Just expr -> evalExpr lAbs f expr
+  rAbs    <- foldl absAssgHelper (return lAbs) pair
+  nAbs    <- abstractMeet lastAbs rAbs
+  return nAbs
 
 evalStmt :: Abstract1 -> String -> CStatement AbsState -> Abstract (Abstract1, CStatement AbsState)
 
@@ -219,47 +235,40 @@ evalStmt a f (CIf cons tstmt (Just fstmt) st) = do
   return (nAbs, CIf cons ntStmt (Just nfStmt) nSt)
 
 -- Loops
+-- Loop analysis is separated into 2 parts:
+--   Case 1: the loop will be executed is handled in EvalLoop and
+--   subsequently EvalNarrow
+--   Case 2: the loop will not be executed is handled in evalStmt
 evalStmt abs f whileStmt@(CWhile cond stmt dw st) = do
   (a, _) <- case dw of
     True  -> evalStmt abs f stmt
     False -> return (abs, stmt)
-  lAST <- getLoopCons a f cond Nothing stmt
-  (nAbs, nWStmt@(CWhile _ nStmt _ nSt)) <- evalLoop a f whileStmt 0
-  fAbs <- evalLAST nAbs lAST
-  let fSt = setAbs (return fAbs) nSt
-  return (fAbs, (CWhile cond nStmt dw fSt))
-{-
-  itNum <- evalIteration a f (Left Nothing) (Just cond) Nothing stmt
-  case itNum of
-    0 -> liftIO $ putStrLn "Warning: The program might be non-terminating!\n"
-    _ -> return ()
-  case itNum of
-    -- We do not know the iteration number
-    -2 -> evalLoop a f whileStmt 0
-    -- The loop will not be executed
-    -1 -> return (a, CWhile cond stmt dw nSt)
-    n  -> evalLoop a f whileStmt n
--}
+  (lnAbs, nWStmt@(CWhile _ nStmt _ nSt)) <- evalLoop a f whileStmt 0
+  lfAbs <- evalNarrow lnAbs f cond stmt Nothing
+  lAbs <- evalCons lfAbs f cond True
+  -- Now deal with the case where the loop will not be executed
+  rAbs <- evalCons abs f cond True
+  finalAbs <- abstractJoin lAbs rAbs
+  let fSt = setAbs (return finalAbs) nSt
+  return (finalAbs, (CWhile cond nStmt dw fSt))
+
 -- We want to deal with init in the for loop
-evalStmt abs f forStmt@(CFor init cond step stmt st) = do
+-- If there is no condition, no need to narrow it
+-- The loop must execute, so we don't need to worry about Case 2 either
+evalStmt abs f forStmt@(CFor init Nothing step stmt st) = do
   a <- evalInit abs f init
-  lAST <- getLoopCons a f cond step stmt
-  (nAbs, nFStmt@(CFor _ _ _ nStmt nSt)) <- evalLoop a f forStmt 0
-  fAbs <- evalLAST nAbs lAST
-  let fSt = setAbs (return fAbs) nSt
-  return (fAbs, (CFor init cond step nStmt fSt))
-{-
-  itNum <- evalIteration a f init cond step stmt
-  case itNum of
-    0 -> liftIO $ putStrLn "Warning: The program might be non-terminating!\n"
-    _ -> return ()
-  case itNum of
-    -- We do not know the iteration number
-    -2 -> evalLoop a f forStmt 0
-    -- The loop will not be executed
-    -1 -> return (a, CFor init cond step stmt nSt)
-    n  -> evalLoop a f forStmt n
--}
+  evalLoop a f forStmt 0
+evalStmt abs f forStmt@(CFor init (Just cond) step stmt st) = do
+  a <- evalInit abs f init
+  (lnAbs, nFStmt@(CFor _ _ _ nStmt nSt)) <- evalLoop a f forStmt 0
+  lfAbs <- evalNarrow lnAbs f cond stmt step
+  lAbs <- evalCons lfAbs f cond True
+  -- Now deal with the case where the loop will not be executed
+  -- Technically this shouldn't happen
+  rAbs <- evalCons a f cond True
+  finalAbs <- abstractJoin lAbs rAbs
+  let fSt = setAbs (return finalAbs) nSt
+  return (finalAbs, (CFor init (Just cond) step nStmt fSt))
 
 -- Others
 evalStmt a f stmt = error "Statement Case not implemented"
